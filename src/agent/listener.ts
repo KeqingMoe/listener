@@ -1207,11 +1207,13 @@ export class Listener {
         if (!this.runtime.world) {
           return { status: 'error', error: 'tool_disabled' };
         }
-        const world = new WorldTools({
+        const world = (this.worldTools ??= new WorldTools({
           store: this.runtime.world,
           groupId: this.groupId,
           selfId: context.selfId,
-        });
+          wake: () => this.worldWake,
+          currentBudget: () => this.worldBudget(),
+        }));
         return await world.execute(name, args, context, signal);
       }
       if (GROUP_TOOLS.some((tool) => tool.function.name === name)) {

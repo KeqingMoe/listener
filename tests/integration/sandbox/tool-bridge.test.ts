@@ -11,6 +11,7 @@ import { startExecution } from '../../../src/sandbox/executor.ts';
 import { ModelSession } from '../../../src/agent/session/store.ts';
 import { WorldEventStore } from '../../../src/world/events.ts';
 import type { Memory, TimelineEntry } from '../../../src/contracts/messages.ts';
+import type { Model } from '../../../src/contracts/model.ts';
 import type {
   ListenerConfig,
   ProjectedListenerConfig,
@@ -73,7 +74,14 @@ const virtualPacer = () => {
   return { pacer, now: () => now };
 };
 
-function host(cfg = config()) {
+function host(
+  cfg = config(),
+  model: Model = {
+    async complete() {
+      return { content: null, tool_calls: [] };
+    },
+  },
+) {
   const calls: { action: string; params: JsonObject }[] = [];
   let next = 5000;
   const api = {
@@ -106,11 +114,7 @@ function host(cfg = config()) {
   const { pacer } = virtualPacer();
   const bot = new Listener(
     api,
-    {
-      async complete() {
-        return { content: null, tool_calls: [] };
-      },
-    },
+    model,
     mem,
     cfg,
     Math.random,
@@ -136,11 +140,10 @@ function host(cfg = config()) {
         signal,
       ),
   });
-  const run = (code: string) =>
+  const run = (code: string, scope = { selfId: self, groupId: group }) =>
     service.execute(
       {
-        selfId: self,
-        groupId: group,
+        ...scope,
         description: 'bridge test',
         code,
         mode: 'sync',
@@ -262,6 +265,194 @@ test('JS exposes reply_to while internal messages and OneBot replies retain thei
     await h.close();
   }
 });
+
+for (const kind of ['messages', 'events'] as const) {
+  test(`JS read_${kind} retains cursors across calls and jobs without relaxing scope or filters`, async () => {
+    const h = host();
+    try {
+      for (const id of ['1', '2', '3']) {
+        h.world.appendMessage({
+          messageId: id,
+          userId: actor,
+          nickname: 'member',
+          text: `body-${id}`,
+          time: Date.now() / 1000,
+        });
+      }
+      const first = await h.run(`
+        const first = await tools.read_${kind}({limit:1});
+        const second = await tools.read_${kind}({limit:1,cursor:first.next_cursor});
+        return JSON.stringify({first,second});`);
+      assert.equal(first.status, 'completed', JSON.stringify(first));
+      const { first: page1, second: page2 } = JSON.parse(
+        (first as { value: string }).value,
+      );
+      const ids = (page: any) =>
+        page[kind].map((item: any) =>
+          kind === 'messages' ? item.messageId : item.payload.message.messageId,
+        );
+      assert.equal(page1.status, 'ok');
+      assert.equal(page2.status, 'ok');
+      assert.deepEqual(ids(page1), ['1']);
+      assert.deepEqual(ids(page2), ['2']);
+      assert.match(page2.next_cursor, /^wc_/);
+      const cursor = JSON.stringify(page2.next_cursor);
+      const next = await h.run(`
+        const page = await tools.read_${kind}({limit:1,cursor:${cursor}});
+        const filters = await tools.read_${kind}({limit:1,cursor:${cursor},direction:'forward'});
+        const wrongKind = await tools.read_${kind === 'messages' ? 'events' : 'messages'}({limit:1,cursor:${cursor}});
+        return JSON.stringify({page,filters,wrongKind});`);
+      assert.equal(next.status, 'completed', JSON.stringify(next));
+      const { page, filters, wrongKind } = JSON.parse(
+        (next as { value: string }).value,
+      );
+      assert.equal(page.status, 'ok');
+      assert.deepEqual(ids(page), ['3']);
+      assert.equal(page.next_cursor, undefined);
+      assert.equal(filters.error, 'invalid_arguments');
+      assert.equal(filters.reason_code, 'cursor_with_filters');
+      assert.deepEqual(wrongKind, { status: 'error', error: 'invalid_cursor' });
+      for (const [scope, error] of [
+        [{ selfId: self, groupId: '654321' }, 'host_unavailable'],
+        [{ selfId: '888', groupId: group }, 'forbidden_group'],
+      ] as const) {
+        const result = await h.run(
+          `return JSON.stringify(await tools.read_${kind}({limit:1,cursor:${cursor}}));`,
+          scope,
+        );
+        assert.equal(result.status, 'completed', JSON.stringify(result));
+        assert.deepEqual(JSON.parse((result as { value: string }).value), {
+          status: 'error',
+          error,
+        });
+      }
+      await h.bot.receive(
+        {
+          post_type: 'message',
+          message_type: 'group',
+          group_id: group,
+          self_id: self,
+          user_id: OWNER_ID,
+          message_id: '99',
+          time: Date.now() / 1000,
+          sender: { nickname: 'owner' },
+          message: [{ type: 'text', data: { text: '/reset' } }],
+        },
+        self,
+      );
+      const reset = await h.run(
+        `return JSON.stringify(await tools.read_${kind}({limit:1,cursor:${cursor}}));`,
+      );
+      assert.equal(reset.status, 'completed', JSON.stringify(reset));
+      assert.deepEqual(JSON.parse((reset as { value: string }).value), {
+        status: 'error',
+        error: 'invalid_cursor',
+      });
+    } finally {
+      await h.close();
+    }
+  });
+}
+
+test(
+  'JS-initialized world tools also serve the direct model path with live wake callbacks',
+  { timeout: 10000 },
+  async () => {
+    let cursor: string, ackCursor: string;
+    let turn = 0;
+    let resolve!: (results: any[]) => void;
+    const observed = new Promise<any[]>((done) => {
+      resolve = done;
+    });
+    const h = host(config(), {
+      async complete(messages) {
+        if (turn++ === 0) {
+          return {
+            content: null,
+            tool_calls: [
+              ['read_messages', { limit: 1, cursor }],
+              ['ack_events', { ack_cursor: ackCursor }],
+              ['get_wake_state', {}],
+            ].map(([name, args], i) => ({
+              id: `direct_${i}`,
+              type: 'function' as const,
+              function: {
+                name: name as string,
+                arguments: JSON.stringify(args),
+              },
+            })),
+          };
+        }
+        resolve(
+          messages
+            .filter((m) => m.role === 'tool')
+            .map((m) => JSON.parse(m.content as string)),
+        );
+        return {
+          content: null,
+          tool_calls: [
+            {
+              id: 'done',
+              type: 'function',
+              function: { name: 'finish', arguments: '{}' },
+            },
+          ],
+        };
+      },
+    });
+    try {
+      for (const id of ['1', '2']) {
+        h.world.appendMessage({
+          messageId: id,
+          userId: actor,
+          nickname: 'member',
+          text: id,
+          time: Date.now() / 1000,
+        });
+      }
+      // ack_events remains model-only; JS returns its read token to that path.
+      const first = await h.run(`return JSON.stringify([
+        await tools.read_messages({limit:1}), await tools.read_events({limit:2})
+      ]);`);
+      assert.equal(first.status, 'completed', JSON.stringify(first));
+      const [messages, events] = JSON.parse((first as { value: string }).value);
+      cursor = messages.next_cursor;
+      ackCursor = events.ack_cursor;
+      assert.match(cursor, /^wc_/);
+      assert.match(ackCursor, /^wa_/);
+      await h.bot.receive(
+        {
+          post_type: 'message',
+          message_type: 'group',
+          group_id: group,
+          self_id: self,
+          user_id: actor,
+          message_id: '3',
+          time: Date.now() / 1000,
+          sender: { nickname: 'member' },
+          message: [
+            { type: 'at', data: { qq: self } },
+            { type: 'text', data: { text: 'continue' } },
+          ],
+        },
+        self,
+      );
+      const [page, ack, wake] = await observed;
+      assert.equal(ack.status, 'ok');
+      assert.equal(ack.observed_through, events.high_water);
+      assert.equal(page.status, 'ok');
+      assert.deepEqual(
+        page.messages.map((m: any) => m.messageId),
+        ['2'],
+      );
+      assert.equal(wake.status, 'ok');
+      assert.ok(wake.wake_budget.remaining_tool_calls > 0);
+      assert.ok(wake.trigger);
+    } finally {
+      await h.close();
+    }
+  },
+);
 
 test('sandbox code sends messages through the same path, records calls and returns a forced summary', async () => {
   const h = host();
