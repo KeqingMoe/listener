@@ -1,6 +1,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { buildToolDefinitions } from '../../../src/agent/tool-definitions.ts';
+import {
+  buildToolDefinitions,
+  SANDBOX_EXCLUDED_TOOLS,
+} from '../../../src/agent/tool-definitions.ts';
+import {
+  ALL_TOOL_NAMES,
+  CORE_TOOL_NAMES,
+} from '../../../src/contracts/tool-names.ts';
 import { buildSystemPrompt } from '../../../src/agent/prompts/index.ts';
 import {
   presentTools,
@@ -123,6 +130,39 @@ test('all model presentation modes use top-level reply_to without reply segments
     );
     if (toolSchema !== 'json') {
       assert.match(prompt, /interface Message \{[^}]*reply_to\?: MessageId;/);
+    }
+  }
+});
+
+test('finish modes and automatic delivery contract agree across all model presentations', () => {
+  for (const toolSchema of ['json', 'ts', 'both'] as const) {
+    const config = allToolsConfig({ toolSchema });
+    const tools = buildToolDefinitions(config);
+    const prompt = buildSystemPrompt(config, tools);
+    const finish = tools.find((t) => t.function.name === 'finish')!;
+    assert.deepEqual(finish.function.parameters.required, ['mode']);
+    assert.match(JSON.stringify(finish.function.parameters), /soft/);
+    assert.match(JSON.stringify(finish.function.parameters), /hard/);
+    assert.match(prompt, /自动投递/);
+    assert.match(prompt, /截点/);
+    assert.match(prompt, /soft/);
+    assert.match(prompt, /hard/);
+    assert.match(prompt, /before_event_id/);
+    assert.doesNotMatch(
+      prompt,
+      /read_messages|ack_events|ack_cursor|observed_through|唤醒输入只有/,
+    );
+    for (const name of ['read_messages', 'ack_events']) {
+      assert.equal(
+        tools.some((t) => t.function.name === name),
+        false,
+      );
+      assert.equal(
+        (CORE_TOOL_NAMES as readonly string[]).includes(name),
+        false,
+      );
+      assert.equal(SANDBOX_EXCLUDED_TOOLS.includes(name), false);
+      assert.equal(ALL_TOOL_NAMES.has(name), true);
     }
   }
 });

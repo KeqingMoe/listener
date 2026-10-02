@@ -61,7 +61,7 @@ function fixture(
       cooldownMs: 0,
       random: false,
     },
-    session: { maxTranscriptBytes: 524288 },
+    session: { maxTranscriptBytes: 524288, eventWindowSize: 20 },
     execution: { maxToolCallsPerWake: 96, wakeTimeoutMs: 90000 },
     messages: { mentions: false },
     observation: { reactions: observe },
@@ -337,7 +337,7 @@ test('e2e: model raytraces in the sandbox, encodes with create_image and sends t
       );
       return {
         content: null,
-        tool_calls: [tool('finish', {}, 'fin' + rows.length)],
+        tool_calls: [tool('finish', { mode: 'hard' }, 'fin' + rows.length)],
       };
     },
   };

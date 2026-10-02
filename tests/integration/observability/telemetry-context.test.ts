@@ -66,13 +66,7 @@ test('request telemetry trace remains scoped across concurrent async operations'
 });
 
 test('world tool names remain observable without arbitrary names', () => {
-  const tools = [
-    'get_wake_state',
-    'get_time',
-    'read_events',
-    'read_messages',
-    'ack_events',
-  ];
+  const tools = ['get_wake_state', 'get_time', 'read_events'];
   assert.deepEqual(sanitizeLogFields({ tools: [...tools, 'SECRET'] }), {
     tools,
   });

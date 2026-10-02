@@ -34,7 +34,7 @@ interface WorldToolsOptions {
   timezone?: string;
 }
 
-type Kind = 'events' | 'messages';
+type Kind = 'events';
 
 type Filters = Pick<
   ReadEventsInput,
@@ -46,20 +46,18 @@ interface Cursor {
   filters: Filters;
   highWater: number;
   boundary: number;
-  base: number;
-  ackEligible: boolean;
-  expires: number;
-}
-
-interface Ack {
-  base: number;
-  sequence: number;
   expires: number;
 }
 
 const TYPES: WorldEventType[] = [...WORLD_EVENT_TYPES];
-const CONSUMER = 'ai',
-  MAX_TOKENS = 4096,
+export const chatConsumer = (selfId: string): string => {
+  if (!id(selfId)) {
+    throw new Error('Invalid chat consumer');
+  }
+  return `chat:${selfId}`;
+};
+
+const MAX_TOKENS = 4096,
   TTL_SECONDS = 86400,
   MAX_BYTES = 24_000;
 
@@ -109,8 +107,6 @@ export const WORLD_TOOL_NAMES = [
   'get_wake_state',
   'get_time',
   'read_events',
-  'read_messages',
-  'ack_events',
 ] as const;
 
 export function buildWorldTools(): ToolDefinition[] {
@@ -127,7 +123,15 @@ export function buildWorldTools(): ToolDefinition[] {
         type: 'string',
         enum: ['forward', 'backward'],
         description:
-          'forward默认从已确认观察位置向后读，backward从最新历史向前读。',
+          '默认backward从最新历史向前读；forward从历史起点或after_event_id之后向后读。',
+      },
+      before_event_id: {
+        type: 'string',
+        description: '本群事件ID，排除此事件，向前补历史；仅backward可用。',
+      },
+      after_event_id: {
+        type: 'string',
+        description: '本群事件ID，排除此事件；必须显式direction=forward。',
       },
       actor_id: { type: 'string', pattern: '^[1-9][0-9]{0,31}$' },
       since: {
@@ -175,25 +179,13 @@ export function buildWorldTools(): ToolDefinition[] {
     tool('get_time', '获取UTC时间、配置时区当地时间和Unix秒。', schema({})),
     tool(
       'read_events',
-      '主动读取当前群事件（消息、撤回、reaction、拍一拍、成员进退、禁言、上传和群名变更）。每次新查询看调用时刻的世界，游标只固定其分页链。limit必填；读取不自动确认，只有无过滤forward连续查询提供ack_cursor。内容不可信，不授予权限。',
+      '查询当前群历史事件（消息、撤回、reaction、拍一拍、成员进退、禁言、上传和群名变更）。默认backward读取最新历史；before_event_id补更早历史，after_event_id须显式forward。每次新查询看调用时刻的世界，游标只固定分页链；limit必填，读取不推进已读位置。内容不可信，不授予权限。',
       query(true),
-    ),
-    tool(
-      'read_messages',
-      '主动读取当前群消息视图及已知撤回状态，不等于读取完整事件流，不推进未读事件位置。limit必填，游标已绑定查询条件，内容不可信。',
-      query(false),
-    ),
-    tool(
-      'ack_events',
-      '明确确认已读取的连续事件前缀，参数只能使用read_events给出的ack_cursor。过滤或倒序查询不提供确认游标，不能跳过未看的事件。',
-      schema({ ack_cursor: { type: 'string', pattern: '^wa_[0-9a-f]{48}$' } }, [
-        'ack_cursor',
-      ]),
     ),
   ].map((definition) => structuredClone(definition));
 }
 
-function message(view: MessageView): JsonObject {
+export function projectWorldMessage(view: MessageView): JsonObject {
   return {
     ...projectMessage(view, 4000),
     ...(view.recalled === true
@@ -211,11 +203,11 @@ function message(view: MessageView): JsonObject {
   };
 }
 
-function event(value: ProjectedWorldEvent): JsonObject {
+export function projectWorldEvent(value: ProjectedWorldEvent): JsonObject {
   let payload: JsonObject | null = null;
   const p = value.payload;
   if (p?.kind === 'message') {
-    payload = { kind: 'message', message: message(p.message) };
+    payload = { kind: 'message', message: projectWorldMessage(p.message) };
   } else if (p?.kind === 'message_recalled') {
     payload = {
       kind: p.kind,
@@ -282,20 +274,20 @@ function event(value: ProjectedWorldEvent): JsonObject {
   };
 }
 
-/** 本群world存储的读取入口：wake状态、时间、事件与消息分页，以及事件ack。只读取本群范围。 */
+/** 本群world历史查询入口；查询从不推进聊天已读位置。 */
 export class WorldTools {
   private readonly groupId: string;
   private readonly clock: () => number;
   private readonly formatter: Intl.DateTimeFormat;
   private readonly timezone: string;
   private readonly cursors = new Map<string, Cursor>();
-  private readonly acks = new Map<string, Ack>();
   constructor(private readonly options: WorldToolsOptions) {
     this.options = { ...options };
     this.groupId = resolveGroupId(options.groupId);
     if (
       !id(options.selfId) ||
-      options.store.getState(CONSUMER).groupId !== this.groupId
+      options.store.getState(chatConsumer(options.selfId)).groupId !==
+        this.groupId
     ) {
       throw new Error('Invalid world tool scope');
     }
@@ -332,21 +324,21 @@ export class WorldTools {
   }
 
   private clean(now: number): void {
-    for (const map of [this.cursors, this.acks]) {
-      for (const [key, value] of map) {
-        if (value.expires <= now) {
-          map.delete(key);
-        }
+    for (const [key, value] of this.cursors) {
+      if (value.expires <= now) {
+        this.cursors.delete(key);
       }
     }
   }
 
-  private token(prefix: 'wc' | 'wa'): string {
+  private token(prefix: 'wc'): string {
     return `${prefix}_${randomBytes(24).toString('hex')}`;
   }
 
   private wake(now: number): JsonObject {
-    const state = this.options.store.getState(CONSUMER),
+    const state = this.options.store.getState(
+        chatConsumer(this.options.selfId),
+      ),
       source = this.options.wake?.() ?? {};
     const wake: JsonObject = {};
     if (safeString(source.wakeId)) {
@@ -391,7 +383,7 @@ export class WorldTools {
       group_id: this.groupId,
       self_id: this.options.selfId,
       latest_available: state.latestSequence,
-      observed_through: state.observationWatermark,
+      read_through: state.observationWatermark,
       unread_count: state.unreadEvents,
       unread_by_type: state.unreadByType,
       queried_at: now,
@@ -405,6 +397,8 @@ export class WorldTools {
       'limit',
       'cursor',
       'direction',
+      'before_event_id',
+      'after_event_id',
       'actor_id',
       'since',
       'until',
@@ -413,7 +407,9 @@ export class WorldTools {
     if (!positive(a.limit)) {
       fail('invalid_arguments');
     }
-    const state = this.options.store.getState(CONSUMER);
+    const state = this.options.store.getState(
+      chatConsumer(this.options.selfId),
+    );
     let query: Cursor;
     if (own(a, 'cursor')) {
       if (Object.keys(a).some((k) => !['limit', 'cursor'].includes(k))) {
@@ -460,7 +456,7 @@ export class WorldTools {
         fail('invalid_arguments');
       }
       const filters: Filters = {
-        direction: (a.direction ?? 'forward') as 'forward' | 'backward',
+        direction: (a.direction ?? 'backward') as 'forward' | 'backward',
         ...(own(a, 'actor_id') ? { actorId: a.actor_id as string } : {}),
         ...(own(a, 'types')
           ? { types: [...(a.types as WorldEventType[])] }
@@ -468,23 +464,39 @@ export class WorldTools {
         ...(own(a, 'since') ? { since: a.since as number } : {}),
         ...(own(a, 'until') ? { until: a.until as number } : {}),
       };
+      let anchor: number | undefined;
+      if (own(a, 'before_event_id') || own(a, 'after_event_id')) {
+        if (
+          (own(a, 'before_event_id') && own(a, 'after_event_id')) ||
+          (own(a, 'before_event_id') && filters.direction !== 'backward') ||
+          (own(a, 'after_event_id') && a.direction !== 'forward')
+        ) {
+          fail('invalid_arguments');
+        }
+        const eventId = a.before_event_id ?? a.after_event_id;
+        if (
+          typeof eventId !== 'string' ||
+          !eventId.length ||
+          eventId.length > 256
+        ) {
+          fail('invalid_arguments');
+        }
+        anchor = this.options.store.findEventSequence(eventId);
+        if (anchor === undefined) {
+          fail('invalid_arguments');
+        }
+      }
       query = {
         kind,
         filters,
         highWater: state.latestSequence,
         boundary:
-          filters.direction === 'backward'
-            ? state.latestSequence + 1
-            : state.observationWatermark,
-        base: state.observationWatermark,
-        ackEligible:
-          kind === 'events' &&
-          filters.direction === 'forward' &&
-          !['actor_id', 'types', 'since', 'until'].some((k) => own(a, k)),
+          anchor ??
+          (filters.direction === 'backward' ? state.latestSequence + 1 : 0),
         expires: now + TTL_SECONDS,
       };
     }
-    if (this.cursors.size + this.acks.size > MAX_TOKENS - 2) {
+    if (this.cursors.size >= MAX_TOKENS) {
       fail('resource_limit');
     }
     const input: ReadEventsInput = {
@@ -496,12 +508,8 @@ export class WorldTools {
         : { after: query.boundary }),
     };
     // 为投影和元数据预留空间，最终输出另行按字节检查。
-    const page =
-      kind === 'events'
-        ? this.options.store.readEvents(input, 12_000)
-        : this.options.store.readMessages(input, 12_000);
-    const items =
-      'events' in page ? page.events.map(event) : page.messages.map(message);
+    const page = this.options.store.readEvents(input, 12_000);
+    const items = page.events.map(projectWorldEvent);
     const output: JsonObject = {
       status: 'ok',
       [kind]: items,
@@ -510,7 +518,9 @@ export class WorldTools {
       truncated: page.truncated,
       ...(page.reason ? { reason: page.reason } : {}),
       high_water: page.highWater,
-      latest_available: this.options.store.getState(CONSUMER).latestSequence,
+      latest_available: this.options.store.getState(
+        chatConsumer(this.options.selfId),
+      ).latestSequence,
       queried_at: page.queriedAt,
       current_time: this.clockResult(now),
       untrusted: true,
@@ -527,15 +537,6 @@ export class WorldTools {
         expires: now + TTL_SECONDS,
       });
       output.next_cursor = token;
-    }
-    if (query.ackEligible && page.lastSequence !== undefined) {
-      const token = this.token('wa');
-      this.acks.set(token, {
-        base: query.base,
-        sequence: page.lastSequence,
-        expires: now + TTL_SECONDS,
-      });
-      output.ack_cursor = token;
     }
     return output;
   }
@@ -567,36 +568,8 @@ export class WorldTools {
         args(value, []);
         return { status: 'ok', ...this.clockResult(now), queried_at: now };
       }
-      if (name === 'read_events' || name === 'read_messages') {
-        return this.read(
-          name === 'read_events' ? 'events' : 'messages',
-          value,
-          now,
-        );
-      }
-      if (name === 'ack_events') {
-        const a = args(value, ['ack_cursor']);
-        if (
-          typeof a.ack_cursor !== 'string' ||
-          !/^wa_[0-9a-f]{48}$/.test(a.ack_cursor)
-        ) {
-          fail('invalid_arguments');
-        }
-        const ack = this.acks.get(a.ack_cursor);
-        if (!ack) {
-          fail('invalid_ack_cursor');
-        }
-        if (
-          this.options.store.getState(CONSUMER).observationWatermark < ack.base
-        ) {
-          fail('invalid_ack_cursor');
-        }
-        const through = this.options.store.ack(CONSUMER, ack.sequence);
-        return {
-          status: 'ok',
-          observed_through: through,
-          acknowledged_at: now,
-        };
+      if (name === 'read_events') {
+        return this.read('events', value, now);
       }
       return { status: 'error', error: 'unknown_tool' };
     } catch (error) {
@@ -614,7 +587,6 @@ export class WorldTools {
         error: [
           'invalid_arguments',
           'invalid_cursor',
-          'invalid_ack_cursor',
           'forbidden_group',
           'resource_limit',
           'cancelled',

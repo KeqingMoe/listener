@@ -8,6 +8,7 @@ export interface BatchItem {
   entry: TimelineEntry;
   context: TurnContext;
   sequence: number;
+  worldSequence?: number;
   received: number;
   trigger?: 'mention' | 'quote';
   unverifiedQuote?: boolean;

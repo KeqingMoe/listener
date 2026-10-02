@@ -98,7 +98,7 @@ function noticesPersisted(
 }
 
 test(
-  'wire group metadata persists by scope without waking and is exposed only after explicit observation',
+  'wire group metadata persists by scope without waking and is delivered on the next wake',
   { timeout: 20000 },
   async () => {
     const dir = mkdtempSync(join(tmpdir(), 'world-notice-entrypoint-'));
@@ -180,9 +180,11 @@ test(
         const toolResults = body.messages.filter((m: any) => m.role === 'tool');
         if (modelCalls === 1) {
           assert.equal(toolResults.length, 0);
+          assert.match(JSON.stringify(body.messages), /OBSERVED_UPLOAD_LABEL/);
+          assert.match(JSON.stringify(body.messages), /OBSERVED_GROUP_NAME/);
           assert.doesNotMatch(
             JSON.stringify(body.messages),
-            /OBSERVED_UPLOAD_LABEL|OBSERVED_GROUP_NAME|PRIVATE_FILE_CREDENTIAL/,
+            /PRIVATE_FILE_CREDENTIAL/,
           );
           assert.deepEqual(
             body.tools
@@ -248,8 +250,11 @@ test(
         }
         const tool =
           modelCalls === 1
-            ? { name: 'read_events', arguments: '{"limit":100}' }
-            : { name: 'finish', arguments: '{}' };
+            ? {
+                name: 'read_events',
+                arguments: '{"limit":100,"direction":"forward"}',
+              }
+            : { name: 'finish', arguments: '{"mode":"hard"}' };
         sendChatStream(res, {
           choices: [
             {

@@ -55,6 +55,8 @@ enabled = false
 # model = "main"
 persona = "prompts/listener.example.md"
 reply.random = false
+# 打开时最新未读QQ事件数及运行期QQ缓冲容量；异步结果不占此限。安全正整数。
+session.event_window_size = 20
 # 一次唤醒全部工具共享调用次数；默认96，安全正整数范围1..9007199254740991。
 execution.max_tool_calls_per_wake = 96
 # 单次唤醒的总时间预算；包含模型请求和工具调用。

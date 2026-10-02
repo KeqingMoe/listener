@@ -145,7 +145,8 @@ async function until(check: () => boolean) {
 }
 
 function setup(
-  complete: (messages: ChatMessage[]) => Completion = () => tool('finish', {}),
+  complete: (messages: ChatMessage[]) => Completion = () =>
+    tool('finish', { mode: 'hard' }),
   settings: ListenerConfig = config,
 ) {
   const memory = new MockMemory();
@@ -332,7 +333,7 @@ test('late reference lookup before sealing merges callers in arrival order witho
   }
 });
 
-test('verified late quote after sealing remains excluded from first snapshot and runs exactly once next', async () => {
+test('verified late quote already delivered at opening does not cause another wake', async () => {
   const s = setup();
   const lookup = deferred<unknown>();
   s.setHook((action) => (action === 'get_msg' ? lookup.promise : undefined));
@@ -357,13 +358,12 @@ test('verified late quote after sealing remains excluded from first snapshot and
       sender: { user_id: self },
     });
     await receive;
-    await until(() => s.requests.length === 2);
     await delay(30);
-    // 迟到的引用呼唤单独成为下一次唤醒，且只运行一次。
-    assert.equal(s.requests.length, 2);
-    assert.equal(wakeCount(s.requests), 2);
-    assert.equal(triggerOf(s.requests[1]!), 'direct');
-    assert.ok(s.tools[1]!.includes('mute_member'));
+    assert.match(JSON.stringify(s.requests[0]), /LATE_QUOTE_SECRET/);
+    assert.equal(s.requests.length, 1);
+    assert.equal(wakeCount(s.requests), 1);
+    assert.equal(triggerOf(s.requests[0]!), 'direct');
+    assert.ok(s.tools[0]!.includes('mute_member'));
   } finally {
     lookup.resolve(null);
     await receive;
@@ -376,7 +376,7 @@ test('reset revokes old confirmations while newly proposed moderation still exec
   t.mock.method(Date, 'now', () => now);
   const s = setup((messages) =>
     messages.some((message) => message.role === 'tool')
-      ? tool('finish', {})
+      ? tool('finish', { mode: 'hard' })
       : mute(),
   );
   try {
@@ -408,7 +408,7 @@ test('reset revokes old confirmations while newly proposed moderation still exec
 test('disconnect with a queued debounce timer permits fresh moderation after reconnect', async () => {
   const s = setup((messages) =>
     messages.some((message) => message.role === 'tool')
-      ? tool('finish', {})
+      ? tool('finish', { mode: 'hard' })
       : mute(),
   );
   try {
@@ -436,10 +436,13 @@ test('disconnect with a queued debounce timer permits fresh moderation after rec
 
 test('disabled moderation rejects invented calls despite quoted owner identity', async () => {
   let round = 0;
-  const s = setup(() => (round++ === 0 ? mute() : tool('finish', {})), {
-    ...config,
-    toolPermissions: toolPermissions(MEMBER_TOOLS),
-  });
+  const s = setup(
+    () => (round++ === 0 ? mute() : tool('finish', { mode: 'hard' })),
+    {
+      ...config,
+      toolPermissions: toolPermissions(MEMBER_TOOLS),
+    },
+  );
   try {
     await s.bot.receive(
       event(
@@ -462,7 +465,9 @@ test('disabled moderation rejects invented calls despite quoted owner identity',
 
 test('mixed explicit callers can request configured moderation without owner-only source identity', async () => {
   let round = 0;
-  const s = setup(() => (round++ === 0 ? mute() : tool('finish', {})));
+  const s = setup(() =>
+    round++ === 0 ? mute() : tool('finish', { mode: 'hard' }),
+  );
   try {
     await s.bot.receive(event('1', 'owner request', OWNER_ID), self);
     await s.bot.receive(event('2', 'nonowner request', target), self);
@@ -489,7 +494,7 @@ test('mixed explicit callers can request configured moderation without owner-onl
 test('ordinary arrival during confirmation notification does not requeue the proposal', async () => {
   const s = setup((messages) =>
     messages.some((message) => message.role === 'tool')
-      ? tool('finish', {})
+      ? tool('finish', { mode: 'hard' })
       : mute(),
   );
   const send = deferred<unknown>();

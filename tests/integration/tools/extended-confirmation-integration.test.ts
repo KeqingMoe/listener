@@ -269,7 +269,7 @@ const proposeKick = (i: number) =>
     ? response(
         call('kick_member', { user_id: TARGET, reject_add_request: false }),
       )
-    : response(call('finish'));
+    : response(call('finish', { mode: 'hard' }));
 
 test('confirmed poke submission never turns into a fabricated delivery acknowledgement', async () => {
   const h = setup(
@@ -277,7 +277,7 @@ test('confirmed poke submission never turns into a fabricated delivery acknowled
     (i) =>
       i === 0
         ? response(call('poke_member', { user_id: TARGET }))
-        : response(call('finish')),
+        : response(call('finish', { mode: 'hard' })),
     (action) => (action === 'group_poke' ? null : undefined),
   );
   try {
@@ -355,7 +355,9 @@ test('equivalent JSON argument formatting shares one proposal and never exposes 
   const second = call('kick_member', {});
   second.function.arguments = ` { "reject_add_request" : false, "user_id" : "${TARGET}" } `;
   const h = setup({ kick_member: 'confirm' }, (i) =>
-    i === 0 ? response(first, second) : response(call('finish')),
+    i === 0
+      ? response(first, second)
+      : response(call('finish', { mode: 'hard' })),
   );
   try {
     await h.receive();
@@ -536,7 +538,7 @@ function fileModel(name: 'delete_group_file' | 'delete_group_folder') {
       const field = kind + '_handle';
       return response(call(name, { [field]: target[field] }));
     }
-    return response(call('finish'));
+    return response(call('finish', { mode: 'hard' }));
   };
 }
 
@@ -613,7 +615,7 @@ test('set_group_admin confirmation rechecks owner-only rights after a valid prop
   const h = setup({ set_group_admin: 'confirm' }, (i) =>
     i === 0
       ? response(call('set_group_admin', { user_id: TARGET, enable: false }))
-      : response(call('finish')),
+      : response(call('finish', { mode: 'hard' })),
   );
   try {
     assert.ok(

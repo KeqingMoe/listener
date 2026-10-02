@@ -49,7 +49,10 @@ const base: ListenerConfig = {
   observeReactions: true,
   confirmationTtlSeconds: 60,
 };
-const call = (name: string, args: unknown = {}) => ({
+const call = (
+  name: string,
+  args: unknown = name === 'finish' ? { mode: 'hard' } : {},
+) => ({
   id: `call_${name}`,
   type: 'function' as const,
   function: { name, arguments: JSON.stringify(args) },
@@ -779,7 +782,7 @@ test('foreign group proof never reaches the actor-list API', async () => {
   }
 });
 
-test('messages arriving while the model thinks are only visible through a fresh read, not injected', async () => {
+test('messages arriving while the model thinks are injected before reviewing a fresh actor read', async () => {
   const held = gate<Completion>();
   const s = setup({
     respond: (r) => (r.index === 0 ? held.promise : complete(silent())),
@@ -788,13 +791,13 @@ test('messages arriving while the model thinks are only visible through a fresh 
     await s.receive(event('1'));
     await until(() => s.requests.length === 1);
     await s.receive(event('2', B, false));
-    // 会话模式的读取工具查询调用时刻的本群world：新消息可被查询，但不会自动插入上下文。
+    // 新消息立即可供工具查询，并在下一次模型请求前自动投递。
     held.resolve(complete(query({ message_id: '2' })));
     await settled(s, 2);
     assert.equal(latest(s.requests[1]!).status, 'ok');
     assert.equal(fetches(s).length, 1);
     assert.ok(
-      !s.requests[1]!.messages.some(
+      s.requests[1]!.messages.some(
         (m) =>
           m.role === 'user' &&
           typeof m.content === 'string' &&

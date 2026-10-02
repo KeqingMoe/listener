@@ -77,7 +77,10 @@ class Mem implements Memory {
   close() {}
 }
 
-const call = (name: string, args: unknown = {}) => ({
+const call = (
+  name: string,
+  args: unknown = name === 'finish' ? { mode: 'hard' } : {},
+) => ({
   id: name + Math.random(),
   type: 'function' as const,
   function: { name, arguments: JSON.stringify(args) },

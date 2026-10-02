@@ -27,7 +27,11 @@ import { toolPermissions } from '../../../support/tool-permissions.ts';
 const GROUP = '123456',
   SELF = '999',
   ACTOR = '111';
-const tool = (id: string, name: string, args: JsonObject = {}) => ({
+const tool = (
+  id: string,
+  name: string,
+  args: JsonObject = name === 'finish' ? { mode: 'hard' } : {},
+) => ({
   id,
   type: 'function' as const,
   function: { name, arguments: JSON.stringify(args) },

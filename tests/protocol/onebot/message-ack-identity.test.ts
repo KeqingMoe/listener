@@ -250,7 +250,7 @@ async function fixture(
                             segments: [{ type: 'text', text: 'new send' }],
                           }),
                         }
-                      : { name: 'finish', arguments: '{}' },
+                      : { name: 'finish', arguments: '{"mode":"hard"}' },
                 },
               ],
             };

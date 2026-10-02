@@ -37,7 +37,10 @@ const cfg: ListenerConfig = {
   retentionDays: 7,
   randomReplyProbability: 0,
 };
-const completion = (name: string, args: unknown = {}): Completion => ({
+const completion = (
+  name: string,
+  args: unknown = name === 'finish' ? { mode: 'hard' } : {},
+): Completion => ({
   content: null,
   tool_calls: [
     {

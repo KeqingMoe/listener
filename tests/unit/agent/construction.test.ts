@@ -416,7 +416,7 @@ test('system prompt uses observation framing and the explicit group without muta
   assert.ok(prompt.includes('本轮只服务群 6677889。'));
   assert.ok(
     prompt.includes(
-      '新到达的消息仅在你再次调用读取工具时可见，不会自动插入上下文。',
+      '唤醒会自动投递当前未读中的最新事件；后续新事件会在运行期间的安全边界继续投递。',
     ),
   );
   assert.ok(
@@ -430,7 +430,10 @@ test('system prompt uses observation framing and the explicit group without muta
     ),
   );
   assert.ok(prompt.includes('\n观察边界：'));
-  assert.ok(prompt.includes('读取不自动确认'));
+  assert.ok(prompt.includes('查询工具不推进已读位置'));
+  assert.ok(prompt.includes('finish必须指定mode'));
+  assert.ok(!names(buildToolDefinitions(input)).includes('read_messages'));
+  assert.ok(!names(buildToolDefinitions(input)).includes('ack_events'));
   assert.ok(!prompt.includes('新到达的群友消息不加入当前范围。'));
   assert.equal(buildSystemPrompt({ ...input, groupId: '6677889' }), prompt);
   assert.deepEqual(input, before);

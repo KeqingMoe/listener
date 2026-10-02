@@ -83,6 +83,7 @@ export function toListenerConfig(
     randomReplyProbability: random ? random.probability : 0,
     randomCooldownMs: random ? random.cooldownMs : 60000,
     randomMaxPerMinute: random ? random.maxPerMinute : 2,
+    eventWindowSize: group.session.eventWindowSize,
     maxToolCallsPerWake: group.execution.maxToolCallsPerWake,
     wakeTimeoutMs: group.execution.wakeTimeoutMs,
     ...(app.web.search ? { webSearch: structuredClone(app.web.search) } : {}),

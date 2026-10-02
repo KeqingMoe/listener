@@ -73,7 +73,7 @@ function fixture(
       cooldownMs: 0,
       random: false,
     },
-    session: { maxTranscriptBytes: 524288 },
+    session: { eventWindowSize: 20, maxTranscriptBytes: 524288 },
     execution: { maxToolCallsPerWake: 96, wakeTimeoutMs: 90000 },
     messages: { mentions: false },
     observation: { reactions: observe },
@@ -303,7 +303,7 @@ async function run(
           JSON.parse(String(m.content)) as JsonObject,
         ]),
       );
-      return { content: null, tool_calls: [tool('finish', {})] };
+      return { content: null, tool_calls: [tool('finish', { mode: 'hard' })] };
     },
   };
   const bot = new Listener(
@@ -665,7 +665,7 @@ test('resolved confirm policies share TTL and require the configured owner once 
         };
       }
       captured = outputs.map((m) => JSON.parse(String(m.content)));
-      return { content: null, tool_calls: [tool('finish', {})] };
+      return { content: null, tool_calls: [tool('finish', { mode: 'hard' })] };
     },
   };
   const bot = new Listener(
@@ -762,7 +762,7 @@ test('ts mode sends declarations to the model while confirm proposals still vali
         };
       }
       captured = outputs.map((m) => JSON.parse(String(m.content)));
-      return { content: null, tool_calls: [tool('finish', {})] };
+      return { content: null, tool_calls: [tool('finish', { mode: 'hard' })] };
     },
   };
   const bot = new Listener(

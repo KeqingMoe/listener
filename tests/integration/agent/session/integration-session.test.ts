@@ -8,6 +8,8 @@ import { Listener } from '../../../../src/agent/listener.ts';
 import { ModelSession } from '../../../../src/agent/session/store.ts';
 import { WorldEventStore } from '../../../../src/world/events.ts';
 import { ResponseStateExpiredError } from '../../../../src/model/responses.ts';
+import { chatConsumer } from '../../../../src/tools/world/tools.ts';
+import { wakeMeta } from '../../../support/listener-fixture.ts';
 import {
   LISTENER_GROUP,
   OWNER_ID,
@@ -38,7 +40,11 @@ const config: ListenerConfig = {
   retentionDays: 7,
   randomReplyProbability: 0,
 };
-const call = (id: string, name: string, args: unknown = {}) => ({
+const call = (
+  id: string,
+  name: string,
+  args: unknown = name === 'finish' ? { mode: 'hard' } : {},
+) => ({
   id,
   type: 'function' as const,
   function: { name, arguments: JSON.stringify(args) },
@@ -99,7 +105,7 @@ async function settled(session: ModelSession, check: () => boolean) {
   assert.fail('session branch did not finish');
 }
 
-test('integrated session starts metadata-only, reads live arrivals, checkpoints calls and reopens its prefix', async () => {
+test('integrated session delivers unread events, reads history without acknowledging, checkpoints calls and reopens its prefix', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'listener-session-')),
     path = join(dir, 'session.db');
   let session = new ModelSession({
@@ -108,12 +114,11 @@ test('integrated session starts metadata-only, reads live arrivals, checkpoints 
     groupId: LISTENER_GROUP,
   });
   const world = new WorldEventStore({
-    path: ':memory:',
+    path: join(dir, 'world.db'),
     groupId: LISTENER_GROUP,
   });
   const requests: ChatMessage[][] = [];
   let listener: Listener;
-  let ack: string | undefined;
   let requestId = 0;
   const sent: string[] = [];
   const model: Model = {
@@ -134,12 +139,12 @@ test('integrated session starts metadata-only, reads live arrivals, checkpoints 
         );
         assert.equal(result.returned, 2);
         assert.match(JSON.stringify(result), /LATE_LIVE_BODY/);
-        ack = result.ack_cursor;
-        return completion(
-          call('messages', 'read_messages', { limit: 10 }),
-          call('time', 'get_time'),
-          call('ack', 'ack_events', { ack_cursor: ack }),
+        assert.equal(result.ack_cursor, undefined);
+        assert.equal(
+          world.getState(chatConsumer(self)).observationWatermark,
+          2,
         );
+        return completion(call('time', 'get_time'));
       }
       return completion(
         call('send', 'send_message', {
@@ -171,11 +176,10 @@ test('integrated session starts metadata-only, reads live arrivals, checkpoints 
   try {
     await listener.receive(event('1', 'INITIAL_SECRET_BODY'), self);
     await settled(session, () => requests.length === 4);
-    assert.equal(requests[0]!.length, 2);
-    assert.doesNotMatch(
-      JSON.stringify(requests[0]),
-      /INITIAL_SECRET_BODY|LATE_LIVE_BODY/,
-    );
+    assert.equal(requests[0]!.length, 3);
+    assert.match(JSON.stringify(requests[0]), /INITIAL_SECRET_BODY/);
+    assert.doesNotMatch(JSON.stringify(requests[0]), /LATE_LIVE_BODY/);
+    assert.match(JSON.stringify(requests[1]), /LATE_LIVE_BODY/);
     const wake = JSON.parse(String(requests[0]![1]!.content)).wake;
     assert.deepEqual(Object.keys(wake).sort(), [
       'group_id',
@@ -183,13 +187,13 @@ test('integrated session starts metadata-only, reads live arrivals, checkpoints 
       'wake_budget',
       'wake_id',
     ]);
-    assert.equal(world.getState('ai').observationWatermark, 2);
+    assert.equal(world.getState(chatConsumer(self)).observationWatermark, 2);
     assert.equal(sent.length, 1);
     await delay(25);
     assert.equal(
       requests.length,
       4,
-      'acknowledgment consumes the queued trigger already observed by this wake',
+      'automatic delivery consumes the queued trigger already observed by this wake',
     );
     const prefix = session.messages();
     assert.equal(
@@ -215,7 +219,7 @@ test('integrated session starts metadata-only, reads live arrivals, checkpoints 
     });
     assert.deepEqual(session.messages(), prefix);
     const nextWorld = new WorldEventStore({
-      path: ':memory:',
+      path: join(dir, 'world.db'),
       groupId: LISTENER_GROUP,
     });
     let next: ChatMessage[] | undefined;
@@ -241,7 +245,7 @@ test('integrated session starts metadata-only, reads live arrivals, checkpoints 
     await listener.receive(event('3', 'SECOND_WAKE_SECRET'), self);
     await settled(session, () => !!next);
     assert.deepEqual(next!.slice(0, prefix.length), prefix);
-    assert.doesNotMatch(
+    assert.match(
       JSON.stringify(next!.slice(prefix.length)),
       /SECOND_WAKE_SECRET/,
     );
@@ -341,12 +345,12 @@ test('attention plans survive session rotation and report their hit only in the 
     const prior = session.state().sessionId;
     session.reset('transcript_resource_boundary');
     assert.notEqual(session.state().sessionId, prior);
-    // 普通唤醒的输入不携带计划细节或消息正文。
+    // 普通唤醒投递消息正文，但不携带计划细节。
     await listener.receive(event('2', 'SECOND_BODY_PRIVATE'), self);
     await settled(session, () => rounds === 2);
     assert.doesNotMatch(
       JSON.stringify(requests[1]),
-      /BODY_PRIVATE|wait for different member|att_[a-f0-9]{16}/,
+      /wait for different member|att_[a-f0-9]{16}/,
     );
     assert.equal(reactionWrites, 1);
     // 会话轮换后计划仍在引擎中；目标成员发言触发关注唤醒，命中信息只出现在trigger里。
@@ -355,7 +359,7 @@ test('attention plans survive session rotation and report their hit only in the 
       self,
     );
     await settled(session, () => rounds === 3);
-    const wake = JSON.parse(String(requests[2]!.at(-1)!.content)).wake;
+    const wake = wakeMeta(requests[2]!);
     assert.equal(wake.group_id, LISTENER_GROUP);
     assert.deepEqual(wake.trigger, {
       type: 'attention',
@@ -367,7 +371,8 @@ test('attention plans survive session rotation and report their hit only in the 
         },
       ],
     });
-    assert.doesNotMatch(JSON.stringify(requests[2]), /BODY_PRIVATE/);
+    assert.match(JSON.stringify(requests[1]), /SECOND_BODY_PRIVATE/);
+    assert.match(JSON.stringify(requests[2]), /THIRD_BODY_PRIVATE/);
   } finally {
     await listener.stop();
   }

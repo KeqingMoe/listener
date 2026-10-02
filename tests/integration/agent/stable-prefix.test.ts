@@ -66,7 +66,16 @@ class Mem implements Memory {
 
 const call = (id: string, name: string): Completion => ({
   content: null,
-  tool_calls: [{ id, type: 'function', function: { name, arguments: '{}' } }],
+  tool_calls: [
+    {
+      id,
+      type: 'function',
+      function: {
+        name,
+        arguments: JSON.stringify(name === 'finish' ? { mode: 'hard' } : {}),
+      },
+    },
+  ],
 });
 const event = {
   post_type: 'message',
@@ -127,7 +136,13 @@ test('system prompt stays byte-stable and budget metadata moves to the initial p
     assert.equal(requests.length, 2);
     assert.deepEqual(requests[1]!.slice(0, requests[0]!.length), requests[0]);
     assert.equal(toolSchemas[0], toolSchemas[1]);
-    assert.equal(requests[1]!.filter((m) => m.role === 'user').length, 1);
+    assert.equal(
+      requests[1]!.filter(
+        (m) =>
+          m.role === 'user' && !JSON.parse(String(m.content)).context_update,
+      ).length,
+      1,
+    );
     assert.equal(requests[0]![0]!.content, requests[1]![0]!.content);
     // 会话模式下预算随唤醒元数据注入。
     const firstUser = wakeMeta(requests[0]!) as any;

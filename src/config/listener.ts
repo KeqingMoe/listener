@@ -38,6 +38,8 @@ export interface ListenerConfig {
   enabled: boolean;
   debounceMs: number;
   cooldownMs: number;
+  /** 打开时最新未读QQ事件数及运行期QQ缓冲容量；异步结果不占此限。 */
+  eventWindowSize?: number;
   maxToolCallsPerWake?: number;
   wakeTimeoutMs?: number;
   retentionDays: number;
@@ -62,6 +64,7 @@ export interface ListenerConfig {
 
 /** 应用边界始终提供完整且按群独立的策略。 */
 export interface ResolvedListenerConfig extends ListenerConfig {
+  eventWindowSize: number;
   toolSchema: ToolSchemaMode;
   observeReactions: boolean;
   messageMentions: boolean;

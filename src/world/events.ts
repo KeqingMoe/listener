@@ -479,6 +479,34 @@ export class WorldEventStore {
     return this.readPage(input, maxBytes, false) as EventPage;
   }
 
+  /** Latest unread rows at a fixed cutoff; no read-position mutation. Newest first. */
+  readUnreadEvents(
+    limit: number,
+    consumer: string,
+    maxBytes = 12_000,
+  ): EventPage & { unread: number } {
+    return this.readPage(
+      { limit, direction: 'backward' },
+      maxBytes,
+      false,
+      consumer,
+    ) as EventPage & { unread: number };
+  }
+
+  /** Group-scoped event anchor; never resolve an ID from another store/group. */
+  findEventSequence(eventId: string): number | undefined {
+    this.ensureOpen();
+    if (!text(eventId)) {
+      return undefined;
+    }
+    const row = this.db
+      .prepare(
+        'SELECT sequence FROM world_events WHERE event_id=? AND group_id=?',
+      )
+      .get(eventId, this.groupId);
+    return row ? Number(row.sequence) : undefined;
+  }
+
   readMessages(input: ReadEventsInput, maxBytes = 24_000): MessagePage {
     if (
       !isPlainObject(input) ||
@@ -518,6 +546,7 @@ export class WorldEventStore {
     input: ReadEventsInput,
     maxBytes: number,
     messages: boolean,
+    unreadConsumer?: string,
   ): EventPage | MessagePage {
     this.ensureOpen();
     if (
@@ -532,6 +561,17 @@ export class WorldEventStore {
     this.db.exec('BEGIN');
     try {
       const queriedAt = nowSeconds();
+      const unreadState =
+        unreadConsumer !== undefined
+          ? this.getState(unreadConsumer)
+          : undefined;
+      if (unreadState) {
+        input = {
+          ...input,
+          after: unreadState.observationWatermark,
+          highWater: unreadState.latestSequence,
+        };
+      }
       const highWater = input?.highWater ?? this.latestSequence();
       const { sql, params } = this.where(input, highWater);
       const items: (ProjectedWorldEvent | MessageView)[] = [];
@@ -609,6 +649,7 @@ export class WorldEventStore {
         lastSequence = row.sequence;
       }
       const metadata = {
+        ...(unreadState ? { unread: unreadState.unreadEvents } : {}),
         requested: input.limit,
         returned: items.length,
         truncated: reason !== undefined,

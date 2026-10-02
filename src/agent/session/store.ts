@@ -447,6 +447,28 @@ export class ModelSession {
   }
 
   private rotate(reason: string): void {
+    if (
+      [
+        'transcript_resource_boundary',
+        'transient_images_lost',
+        'configuration_changed',
+        'response_state_expired',
+      ].includes(reason)
+    ) {
+      // 自动轮换不能丢失尚未参与任何已持久化模型响应的后台结果。
+      this.db
+        .prepare(
+          `UPDATE model_external_events SET projected_at=NULL
+        WHERE event_id IN (
+          SELECT json_extract(payload,'$.event_id') FROM model_session_journal
+          WHERE session_id=? AND kind='external_event_received' AND seq>(
+            SELECT COALESCE(MAX(seq),0) FROM model_session_journal
+            WHERE session_id=? AND kind='assistant_checkpoint'
+          )
+        )`,
+        )
+        .run(this.stateValue.sessionId, this.stateValue.sessionId);
+    }
     this.resolvePending(reason);
     if (this.stateValue.wakeId) {
       // 轮换前先结束旧wake，避免迟到的回调误结束新会话。
@@ -536,35 +558,171 @@ export class ModelSession {
       .get(selfId);
   }
 
-  projectExternalEvents(selfId: string): number {
+  /** journal是跨会话轮换的已投递截点；World的ack只是这个值的镜像。 */
+  chatReadThrough(selfId: string): number {
     this.check();
-    if (!this.stateValue.wakeId || this.pending().length) {
-      throw new Error('invalid_input_boundary');
+    if (!/^\d+$/.test(selfId)) {
+      throw new Error('invalid_context_update');
+    }
+    const row = this.db
+      .prepare(
+        "SELECT payload FROM model_session_journal WHERE kind='chat_read' AND json_extract(payload,'$.self_id')=? ORDER BY seq DESC LIMIT 1",
+      )
+      .get(selfId);
+    return row ? Number(JSON.parse(String(row.payload)).read_through) : 0;
+  }
+
+  /** QQ已由调用方安全投影。此处只按真实持久化字节预算分批宿主结果，不再裁剪QQ。 */
+  appendContextUpdate(
+    selfId: string,
+    qq: {
+      events: JsonObject[];
+      unread_count: number;
+      omitted_count: number;
+      read_through: number;
+    },
+    options: { force?: boolean } = {},
+  ): { appended: boolean; hostEvents: number } {
+    this.check();
+    if (
+      !/^\d+$/.test(selfId) ||
+      !qq ||
+      !Array.isArray(qq.events) ||
+      !qq.events.every(
+        (event) =>
+          isObject(event) &&
+          typeof event.observed_at === 'number' &&
+          Number.isFinite(event.observed_at * 1000),
+      ) ||
+      ![qq.unread_count, qq.omitted_count, qq.read_through].every(
+        (n) => Number.isSafeInteger(n) && n >= 0,
+      )
+    ) {
+      throw new Error('invalid_context_update');
     }
     return this.transaction(() => {
+      if (!this.stateValue.wakeId || this.terminal() || this.pending().length) {
+        throw new Error('invalid_input_boundary');
+      }
       const rows = this.db
         .prepare(
-          'SELECT event_id,payload FROM model_external_events WHERE self_id=? AND projected_at IS NULL ORDER BY received_at,event_id LIMIT 1',
+          'SELECT event_id,payload,received_at FROM model_external_events WHERE self_id=? AND projected_at IS NULL ORDER BY received_at,event_id',
         )
-        .all(selfId);
+        .iterate(selfId);
+      const items = qq.events.map((event) => ({
+        at: Number(event.observed_at) * 1000,
+        item: { type: 'world_event', event } as JsonObject,
+      }));
+      // 预留一次模型响应和一次工具结果；appendAssistant仍按实际工具数追加reserve。
+      const reserve = 2 * RESULT_RESERVE;
+      const budget = this.maxBytes - this.size() - reserve;
+      const readThrough = Math.max(
+        this.chatReadThrough(selfId),
+        qq.read_through,
+      );
+      const message = (): ChatMessage => ({
+        role: 'user',
+        content: JSON.stringify({
+          context_update: {
+            unread_count: qq.unread_count,
+            omitted_count: qq.omitted_count,
+            read_through: readThrough,
+            items: [...items]
+              .sort((a, b) => a.at - b.at)
+              .map(({ item }) => item),
+          },
+        }),
+      });
+      const fits = (): boolean =>
+        Buffer.byteLength(JSON.stringify(message())) <= budget;
+      const selected: string[] = [];
       for (const row of rows) {
-        this.append({
-          role: 'user',
-          content: JSON.stringify({
-            host_event: JSON.parse(String(row.payload)),
-          }),
-        });
-        this.audit('external_event_received', {
-          event_id: String(row.event_id),
-        });
+        const payload = JSON.parse(String(row.payload)) as JsonObject;
+        const entry = {
+          at: Number(row.received_at),
+          item: {
+            type: 'job_result',
+            event_id: String(row.event_id),
+            result: payload,
+          } as JsonObject,
+        };
+        items.push(entry);
+        if (!fits()) {
+          // 已选一批则留待下次；首条过大时有界简化，避免大结果堵死队列。
+          if (!selected.length) {
+            for (const preview of [512, 128, 0]) {
+              const result: JsonObject = { ...payload, truncated: true };
+              for (const key of [
+                'value',
+                'error',
+                'logs',
+                'diagnostic',
+                'tool_calls',
+              ]) {
+                if (key in result) {
+                  result[key] = preview
+                    ? JSON.stringify(result[key]).slice(0, preview)
+                    : '[truncated]';
+                }
+              }
+              entry.item.result = result;
+              if (fits()) {
+                break;
+              }
+            }
+            if (!fits()) {
+              // 非结果字段也可能很大；最终摘要保留身份、状态和既有查询入口。
+              entry.item.result = {
+                job_id: payload.job_id ?? null,
+                status: payload.status ?? null,
+                truncated: true,
+                query: {
+                  tool: 'query_javascript_jobs',
+                  arguments: { job_id: payload.job_id ?? null },
+                },
+              };
+            }
+          }
+          if (!fits()) {
+            items.pop();
+            if (!selected.length && !qq.events.length) {
+              throw new Error('session_resource_limit');
+            }
+            break;
+          }
+        }
+        selected.push(String(row.event_id));
+      }
+      if (!options.force && !qq.events.length && !selected.length) {
+        // 即使没有输入，下一模型/工具round也必须有reserve供父级及时轮换。
+        if (budget < 0) {
+          throw new Error('session_resource_limit');
+        }
+        return { appended: false, hostEvents: 0 };
+      }
+      this.append(message(), reserve);
+      const projectedAt = Date.now();
+      for (const eventId of selected) {
+        this.audit('external_event_received', { event_id: eventId });
         this.db
           .prepare(
-            'UPDATE model_external_events SET projected_at=? WHERE event_id=?',
+            'UPDATE model_external_events SET projected_at=? WHERE event_id=? AND self_id=? AND projected_at IS NULL',
           )
-          .run(Date.now(), String(row.event_id));
+          .run(projectedAt, eventId, selfId);
       }
-      return rows.length;
+      this.audit('chat_read', { self_id: selfId, read_through: readThrough });
+      return { appended: true, hostEvents: selected.length };
     });
+  }
+
+  /** 兼容入口；新调用方应同时投递QQ上下文。 */
+  projectExternalEvents(selfId: string): number {
+    return this.appendContextUpdate(selfId, {
+      events: [],
+      unread_count: 0,
+      omitted_count: 0,
+      read_through: this.chatReadThrough(selfId),
+    }).hostEvents;
   }
 
   messages(): ChatMessage[] {
@@ -901,11 +1059,18 @@ export class ModelSession {
         throw new Error('tool_not_started');
       }
       this.complete(row, result, 'finished');
-      if (row.name === 'finish' && result.status === 'ok') {
+      if (
+        row.name === 'finish' &&
+        result.status === 'ok' &&
+        result.closed === true
+      ) {
         let valid = false;
         try {
           const args: unknown = JSON.parse(row.arguments);
-          valid = isObject(args) && Object.keys(args).length === 0;
+          valid =
+            isObject(args) &&
+            Object.keys(args).length === 1 &&
+            (args.mode === 'soft' || args.mode === 'hard');
         } catch {}
         if (valid) {
           this.resolvePending('turn_finished');

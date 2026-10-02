@@ -113,7 +113,7 @@ function setup(reply: unknown) {
       requests.push(structuredClone(messages));
       return requests.length === 1
         ? completion('send_message', reply)
-        : completion('finish', {});
+        : completion('finish', { mode: 'hard' });
     },
   };
   const bot = new Listener(

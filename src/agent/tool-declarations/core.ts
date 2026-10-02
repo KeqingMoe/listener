@@ -21,8 +21,8 @@ function send_message(_: {
   },
   finish: {
     summary: '结束本次唤醒。',
-    ts: `/** 不发言时直接调用；之后的调用都不执行。 */
-function finish(_: {}): { status: 'ok' };`,
+    ts: `/** soft：有新事件或待投递的后台结果则投递并继续，否则结束；hard：立即结束，保留未读事件和待投递结果。之后同批调用不执行。 */
+function finish(_: { mode: 'soft' | 'hard' }): { status: 'ok'; closed: boolean } | Failure;`,
   },
   get_group_members: {
     summary: '分页搜索本群成员。',
@@ -56,6 +56,8 @@ function read_message(_: { message_id: MessageId }): { status: 'ok'; message: Me
     ts: `/** 不读正文，不推进已读位置。 */
 function get_wake_state(_: {}): {
   status: 'ok';
+  read_through: number;
+  latest_available: number;
   unread_count: number;
   unread_by_type: Record<string, number>;
   wake_budget?: WakeBudget;
@@ -78,14 +80,15 @@ type Clock = { unix_seconds: UnixSeconds; utc: string; local: string; timezone: 
   read_events: {
     summary: '读取本群事件流。',
     ts: `/**
- * 默认 forward 从已确认处往后读，backward 从最新往前读；续页只传 limit 和 cursor。
- * 仅无任何过滤且 forward 时返回 ack_cursor。
+ * 默认 backward 从最新往前读；before_event_id 补该事件之前历史。
+ * after_event_id 必须显式 direction=forward；不传锚点的 forward 从历史起点读取。
+ * 不推进已读位置；续页只传 limit 和 cursor，不能混传方向、锚点或过滤。
  */
 function read_events(
   _:
-    | { limit: number; direction?: 'forward' | 'backward'; actor_id?: UserId; since?: UnixSeconds; until?: UnixSeconds; types?: EventType[] }
+    | ({ limit: number; actor_id?: UserId; since?: UnixSeconds; until?: UnixSeconds; types?: EventType[] } & ({ direction?: 'backward'; before_event_id?: string } | { direction: 'forward'; after_event_id?: string }))
     | { limit: number; cursor: string },
-): ({ status: 'ok'; events: WorldEvent[]; next_cursor?: string; ack_cursor?: string } & Page) | Failure;`,
+): ({ status: 'ok'; events: WorldEvent[]; next_cursor?: string } & Page) | Failure;`,
     types: {
       Page: `/** truncated=true 时用 next_cursor 继续。 */
 type Page = { returned: number; truncated: boolean; current_time: Clock };`,
@@ -95,28 +98,5 @@ type Clock = { unix_seconds: UnixSeconds; utc: string; local: string; timezone: 
       WorldEvent: `/** payload 随 type 变化，message.created 的 payload.message 是 Message。 */
 type WorldEvent = { event_id: string; sequence: number; type: EventType; observed_at: UnixSeconds; occurred_at?: UnixSeconds; actor_id?: UserId; payload: object | null; payload_omitted?: true };`,
     },
-  },
-  read_messages: {
-    summary: '读取本群消息。',
-    ts: `/**
- * 含已知撤回状态，不推进已读位置。
- * 默认 forward 从已确认处往后读，backward 从最新往前读；续页只传 limit 和 cursor。
- */
-function read_messages(
-  _:
-    | { limit: number; direction?: 'forward' | 'backward'; actor_id?: UserId; since?: UnixSeconds; until?: UnixSeconds }
-    | { limit: number; cursor: string },
-): ({ status: 'ok'; messages: Message[]; next_cursor?: string } & Page) | Failure;`,
-    types: {
-      Page: `/** truncated=true 时用 next_cursor 继续。 */
-type Page = { returned: number; truncated: boolean; current_time: Clock };`,
-      Clock: `/** local 按配置时区格式化，timezone 是IANA时区。 */
-type Clock = { unix_seconds: UnixSeconds; utc: string; local: string; timezone: string };`,
-    },
-  },
-  ack_events: {
-    summary: '确认已读取的事件。',
-    ts: `/** 确认已读到 ack_cursor 为止的事件；读取不会自动确认。 */
-function ack_events(_: { ack_cursor: string }): { status: 'ok'; observed_through: number } | Failure;`,
   },
 };

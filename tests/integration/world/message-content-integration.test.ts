@@ -279,27 +279,37 @@ test('model sees typed received and own historical faces without duplicated flat
   };
   // 每次唤醒先读取最新消息，再按轮次发送或结束。
   const script = [
-    completion('read_messages', { limit: 5, direction: 'backward' }),
+    completion('read_events', {
+      limit: 5,
+      direction: 'backward',
+      types: ['message.created'],
+    }),
     completion('send_message', {
       segments: [
         { type: 'face', id: '0', name: '微笑' },
         { type: 'text', text: literal },
       ],
     }),
-    completion('finish', {}),
-    completion('read_messages', { limit: 5, direction: 'backward' }),
-    completion('finish', {}),
+    completion('finish', { mode: 'hard' }),
+    completion('read_events', {
+      limit: 5,
+      direction: 'backward',
+      types: ['message.created'],
+    }),
+    completion('finish', { mode: 'hard' }),
   ];
   const model: Model = {
     async complete(messages) {
       requests.push(structuredClone(messages));
-      return script[requests.length - 1] ?? completion('finish', {});
+      return (
+        script[requests.length - 1] ?? completion('finish', { mode: 'hard' })
+      );
     },
   };
   const readResult = (messages: ChatMessage[]) =>
     JSON.parse(
       String(messages.filter((m) => m.role === 'tool').at(-1)!.content),
-    );
+    ).events.map((event: any) => event.payload.message);
   const bot = new Listener(
     api,
     model,
@@ -325,7 +335,7 @@ test('model sees typed received and own historical faces without duplicated flat
       { type: 'face', data: { id: '0' } },
       text(literal),
     ]);
-    const first = readResult(requests[1]!).messages.find(
+    const first = readResult(requests[1]!).find(
       (r: any) => r.messageId === '1',
     );
     assert.equal(first.text, undefined);
@@ -338,7 +348,7 @@ test('model sees typed received and own historical faces without duplicated flat
     );
     await settled(bot);
     assert.equal(requests.length, 5);
-    const own = readResult(requests[4]!).messages.find(
+    const own = readResult(requests[4]!).find(
       (r: any) => r.messageId === '900',
     );
     assert.equal(own.text, undefined);

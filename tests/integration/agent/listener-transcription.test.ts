@@ -77,7 +77,7 @@ const call = (id: string, name: string, args: unknown): ToolCall => ({
 });
 const transcribe = (id = '1') =>
   call('transcribe', 'transcribe_voice', { message_id: id });
-const finish = () => call('finish', 'finish', {});
+const finish = () => call('finish', 'finish', { mode: 'hard' });
 const send = () =>
   call('send', 'send_message', {
     segments: [{ type: 'text', text: '收到，明天见。' }],

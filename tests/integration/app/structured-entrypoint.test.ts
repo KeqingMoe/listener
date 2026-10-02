@@ -150,7 +150,8 @@ test(
         assert.ok(!names.includes('get_group_members'));
         assert.ok(!names.includes('get_member_info'));
         assert.ok(!names.includes('react_message'));
-        assert.ok(names.includes('read_messages'));
+        assert.ok(!names.includes('read_messages'));
+        assert.ok(!names.includes('ack_events'));
         assert.ok(names.includes('read_events'));
         assert.equal(payload(body).group_id, GROUP);
         assert.ok(!JSON.stringify(payload(body)).includes(LITERAL));
@@ -159,16 +160,16 @@ test(
         if (observed.length === 0) {
           if (sent === 0) {
             assert.ok(
-              !JSON.stringify(body.messages).includes(LITERAL),
-              'initial input must not inject message bodies',
+              JSON.stringify(body.messages).includes(LITERAL),
+              'initial input delivers the unread event window',
             );
           } else {
             assert.equal(sent, 1);
             assert.ok(
-              !JSON.stringify(body.messages).includes(
+              JSON.stringify(body.messages).includes(
                 '再看一下第一条消息，原样引用文字标记',
               ),
-              'new wake must not inject the new message body',
+              'new wake delivers the new unread message body',
             );
             assert.deepEqual(
               body.messages.slice(0, requests[1].messages.length),
@@ -176,11 +177,13 @@ test(
               'second wake preserves the previous request prefix',
             );
           }
-          next = op('read_messages', { limit: 100 });
+          next = op('read_events', { limit: 100 });
         } else {
           const page = JSON.parse(observed[0].content);
           assert.equal(page.status, 'ok');
-          const history = page.messages,
+          const history = page.events
+              .filter((event: any) => event.type === 'message.created')
+              .map((event: any) => event.payload.message),
             legacy = history.find((m: any) => m.messageId === '98');
           assert.ok(legacy);
           assert.equal(legacy.representation, 'legacy_text');
@@ -233,7 +236,12 @@ test(
                 tool_calls: [
                   next,
                   ...(next.function.name === 'send_message'
-                    ? [{ ...op('finish', {}), id: `finish_${requests.length}` }]
+                    ? [
+                        {
+                          ...op('finish', { mode: 'hard' }),
+                          id: `finish_${requests.length}`,
+                        },
+                      ]
                     : []),
                 ],
               },

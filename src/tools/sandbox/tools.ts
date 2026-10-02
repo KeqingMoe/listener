@@ -32,7 +32,7 @@ const definitions: ToolDefinition[] = [
     function: {
       name: 'execute_javascript',
       description:
-        '在隔离的 JavaScript 沙箱中执行计算。代码按 async 函数体执行，始终可以使用 await，必须 return 一个字符串；数字或BigInt请自行调用 .toString()，结构化结果请自行 JSON.stringify()，不会隐式序列化。mode=sync 等待并返回结果，mode=async 立即返回任务句柄，mode=auto 优先等待、超时后转为后台任务。sync和auto必须提供wait_ms整数1..2147483647，表示包含排队与启动的前台等待毫秒数，没有默认值；async禁止提供wait_ms。沙箱无文件、网络或环境变量访问。代码内可 await tools.<工具名>(与工具调用相同的参数)，返回与该工具结果相同的对象，失败不抛异常；finish、manage_attention、get_wake_state、ack_events和execute_javascript除外；字节字段可传Uint8Array，view_images/view_custom_face在代码内返回RGBA像素。这些调用不占本轮工具预算，但有副作用的操作请慎用：结果为unknown时不要重试，不要写无退出条件的发送循环。结果的tool_calls汇总各工具调用次数并列出所有非ok调用。示例：let n=1n; for(let i=2n;i<=114n;i++) n*=i; return n.toString();',
+        '在隔离的 JavaScript 沙箱中执行计算。代码按 async 函数体执行，始终可以使用 await，必须 return 一个字符串；数字或BigInt请自行调用 .toString()，结构化结果请自行 JSON.stringify()，不会隐式序列化。mode=sync 等待并返回结果，mode=async 立即返回任务句柄，mode=auto 优先等待、超时后转为后台任务。sync和auto必须提供wait_ms整数1..2147483647，表示包含排队与启动的前台等待毫秒数，没有默认值；async禁止提供wait_ms。沙箱无文件、网络或环境变量访问。代码内可 await tools.<工具名>(与工具调用相同的参数)，返回与该工具结果相同的对象，失败不抛异常；finish、manage_attention、get_wake_state和execute_javascript除外；字节字段可传Uint8Array，view_images/view_custom_face在代码内返回RGBA像素。这些调用不占本轮工具预算，但有副作用的操作请慎用：结果为unknown时不要重试，不要写无退出条件的发送循环。结果的tool_calls汇总各工具调用次数并列出所有非ok调用。示例：let n=1n; for(let i=2n;i<=114n;i++) n*=i; return n.toString();',
       parameters: {
         type: 'object',
         additionalProperties: false,

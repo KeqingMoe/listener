@@ -121,7 +121,9 @@ test(
         assert.equal(Object.hasOwn(input, 'trusted_moderation_allowed'), false);
         assert.ok(!JSON.stringify(input).includes(BODY));
         assert.ok(
-          body.tools.some((t: any) => t.function.name === 'read_messages'),
+          !body.tools.some((t: any) =>
+            ['read_messages', 'ack_events'].includes(t.function.name),
+          ),
         );
         assert.ok(
           body.tools.some((t: any) => t.function.name === 'read_events'),
@@ -166,18 +168,29 @@ test(
           (m: any) => m.role === 'tool',
         );
         if (toolMessages.length === 0) {
-          assert.ok(!JSON.stringify(body.messages).includes(BODY));
-          next = op('read_messages', { limit: 100 });
+          assert.ok(JSON.stringify(body.messages).includes(BODY));
+          next = op('read_events', { limit: 100 });
         } else if (toolMessages.length === 1) {
           const result = JSON.parse(toolMessages[0].content);
           assert.equal(result.status, 'ok');
-          assert.equal(result.messages.length, 1);
           assert.equal(
-            result.messages[0].messageId,
+            result.events.map((event: any) => event.payload.message).length,
+            1,
+          );
+          assert.equal(
+            result.events.map((event: any) => event.payload.message)[0]
+              .messageId,
             group === A ? '101' : '201',
           );
-          assert.equal(result.messages[0].userId, MEMBER);
-          assert.ok(JSON.stringify(result.messages[0]).includes(BODY));
+          assert.equal(
+            result.events.map((event: any) => event.payload.message)[0].userId,
+            MEMBER,
+          );
+          assert.ok(
+            JSON.stringify(
+              result.events.map((event: any) => event.payload.message)[0],
+            ).includes(BODY),
+          );
           next = op('mute_member', { user_id: TARGET, seconds: 120 });
         } else {
           assert.equal(group, A);
@@ -192,7 +205,7 @@ test(
             [{ group_id: A, user_id: TARGET, duration: 120 }],
           );
           assert.equal(sends.length, 0);
-          next = op('finish', {});
+          next = op('finish', { mode: 'hard' });
         }
         sendChatStream(res, {
           choices: [
@@ -204,7 +217,7 @@ test(
                 tool_calls: [
                   next,
                   ...(group === B && next.function.name === 'mute_member'
-                    ? [{ ...op('finish', {}), id: 'finish_B' }]
+                    ? [{ ...op('finish', { mode: 'hard' }), id: 'finish_B' }]
                     : []),
                 ],
               },

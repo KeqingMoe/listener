@@ -83,7 +83,7 @@ async function run(maxToolCallsPerWake: number) {
               tool('unknown', 'invented_tool', '{}'),
               tool('disabled', 'mute_member', '{"user_id":"456","seconds":3}'),
             ]
-          : [tool('finish', 'finish', '{}')];
+          : [tool('finish', 'finish', '{"mode":"hard"}')];
       sendChatStream(res, {
         choices: [
           {

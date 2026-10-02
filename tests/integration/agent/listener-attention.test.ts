@@ -74,7 +74,10 @@ function abortable<T>(promise: Promise<T>, signal?: AbortSignal): Promise<T> {
   });
 }
 
-const call = (name: string, args: unknown = {}) => ({
+const call = (
+  name: string,
+  args: unknown = name === 'finish' ? { mode: 'hard' } : {},
+) => ({
   id: `call_${name}`,
   type: 'function' as const,
   function: { name, arguments: JSON.stringify(args) },
@@ -227,7 +230,7 @@ function setup(
 
 const triggerKind = (r: Request) =>
   (wakeMeta(r.messages).trigger as { type: string }).type;
-/** 本次唤醒元数据中的trigger（plan_hits/omitted_plan_hits/unread_omitted）。 */
+/** 本次唤醒元数据中的trigger（plan_hits/omitted_plan_hits）。 */
 const state = (r: Request): any => wakeMeta(r.messages).trigger;
 const plans = (s: ReturnType<typeof setup>): any[] =>
   (s.bot as any).attention?.snapshot(Date.now()) ?? [];
@@ -793,7 +796,7 @@ test('unread retention and batch caps report omissions instead of creating unbou
   }
 });
 
-test('attention_state from get_wake_state reports dropped unread messages', async () => {
+test('attention wake reports world unread and window omissions, not attention buffer eviction', async () => {
   const s = setup({
     respond: (r) =>
       r.index === 0
@@ -810,7 +813,16 @@ test('attention_state from get_wake_state reports dropped unread messages', asyn
       await s.receive(event(String(i), A));
     }
     await settled(s, 2);
-    assert.equal(state(s.requests[1]!).unread_omitted, 72);
+    const update = s.requests[1]!.messages.filter(
+      (m) => m.role === 'user' && typeof m.content === 'string',
+    )
+      .map((m) => JSON.parse(m.content as string).context_update)
+      .filter(Boolean)
+      .at(-1);
+    assert.equal(update.unread_count, 200);
+    assert.ok(update.items.length > 0 && update.items.length <= 20);
+    assert.equal(update.omitted_count, 200 - update.items.length);
+    assert.equal(state(s.requests[1]!).unread_omitted, undefined);
   } finally {
     await s.close();
   }

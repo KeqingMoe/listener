@@ -100,7 +100,7 @@ test(
           wakeStep = 0;
           payloads.push(wake);
           assert.doesNotMatch(
-            JSON.stringify(body.messages[wakeIndex]),
+            JSON.stringify(wake),
             /fixture normal turn|reactions|current_batch/,
           );
         }
@@ -140,7 +140,7 @@ test(
           step === 0
             ? { name: 'read_events', arguments: '{"limit":100}' }
             : step === 1
-              ? { name: 'read_messages', arguments: '{"limit":100}' }
+              ? { name: 'read_events', arguments: '{"limit":100}' }
               : step === 2
                 ? wakeNumber === 1
                   ? {
@@ -158,7 +158,7 @@ test(
                       name: 'read_message',
                       arguments: JSON.stringify({ message_id: BOT_MESSAGE }),
                     }
-                : { name: 'finish', arguments: '{}' };
+                : { name: 'finish', arguments: '{"mode":"hard"}' };
         sendChatStream(res, {
           choices: [
             {
@@ -177,7 +177,10 @@ test(
                         {
                           id: `finish_${payloads.length}`,
                           type: 'function',
-                          function: { name: 'finish', arguments: '{}' },
+                          function: {
+                            name: 'finish',
+                            arguments: '{"mode":"hard"}',
+                          },
                         },
                       ]
                     : []),

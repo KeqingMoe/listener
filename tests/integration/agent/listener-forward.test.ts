@@ -123,7 +123,7 @@ const complete = (...tool_calls: ToolCall[]): Completion => ({
   content: null,
   tool_calls,
 });
-const silent = () => complete(call('silent', 'finish', {}));
+const silent = () => complete(call('silent', 'finish', { mode: 'hard' }));
 
 async function until(check: () => boolean) {
   for (let i = 0; i < 200; i++) {
@@ -217,7 +217,9 @@ const sent = (s: ReturnType<typeof setup>) =>
 
 test('event native inline and JSON card persist only stable refs and honest verified/hint counts', async () => {
   const s = setup([
-    complete(call('messages', 'read_messages', { limit: 5 })),
+    complete(
+      call('messages', 'read_events', { limit: 5, types: ['message.created'] }),
+    ),
     silent(),
   ]);
   try {
@@ -239,10 +241,10 @@ test('event native inline and JSON card persist only stable refs and honest veri
     const persisted = s.memory.context();
     assert.match(persisted, /已核实/);
     assert.match(persisted, /未核实/);
-    // 会话模式下模型通过read_messages看到同样的结构化片段。
-    const represented = toolResult(s.requests[1]!, 'messages').messages.find(
-      (m: any) => m.messageId === '1',
-    );
+    // 事件读取返回同样的结构化消息片段。
+    const represented = toolResult(s.requests[1]!, 'messages').events.find(
+      (e: any) => e.payload?.message?.messageId === '1',
+    ).payload.message;
     assert.deepEqual(represented.segments, [
       { type: 'at', user_id: self },
       {
@@ -274,7 +276,7 @@ test('event native inline and JSON card persist only stable refs and honest veri
 test('enabled forward executes then sends, tool content never enters timeline memory', async () => {
   const s = setup([
     complete(read()),
-    complete(send(), call('finish', 'finish', {})),
+    complete(send(), call('finish', 'finish', { mode: 'hard' })),
   ]);
   try {
     await s.bot.receive(event(), self);
@@ -338,7 +340,7 @@ test('mixed forward/read/send batches answer every call but defer sends until ne
     }
     const s = setup([
       complete(...batch),
-      complete(send(), call('finish', 'finish', {})),
+      complete(send(), call('finish', 'finish', { mode: 'hard' })),
     ]);
     let sentEarly = false;
     s.setOnComplete((round) => {
@@ -373,7 +375,7 @@ test('quoted target is discovered through read_message then verified and read as
   const s = setup([
     complete(call('quote', 'read_message', { message_id: '2' })),
     complete(read(1, 1, 'fwd_2_1')),
-    complete(send(), call('finish', 'finish', {})),
+    complete(send(), call('finish', 'finish', { mode: 'hard' })),
   ]);
   try {
     await s.bot.receive(
@@ -464,7 +466,7 @@ test('nested claimed owner stays untrusted and cannot enable default-off moderat
           call('mute', 'mute_member', { user_id: '456', seconds: 60 }),
         );
       }
-      return complete(send(), call('finish', 'finish', {}));
+      return complete(send(), call('finish', 'finish', { mode: 'hard' }));
     },
     {},
     (action) =>
@@ -640,7 +642,7 @@ test('forward logger emits only safe correlated metadata, never resource/body/cl
   const s = setup([
     complete(read()),
     complete(read(1, 1, 'fwdn_0000000000000000', 'invalid')),
-    complete(send(), call('finish', 'finish', {})),
+    complete(send(), call('finish', 'finish', { mode: 'hard' })),
   ]);
   try {
     await s.bot.receive(event(), self);

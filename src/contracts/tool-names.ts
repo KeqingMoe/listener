@@ -71,8 +71,6 @@ export const CORE_TOOL_NAMES = [
   'get_wake_state',
   'get_time',
   'read_events',
-  'read_messages',
-  'ack_events',
   'invalid',
 ] as const;
 
@@ -80,4 +78,7 @@ export const CORE_TOOL_NAMES = [
 export const ALL_TOOL_NAMES: ReadonlySet<string> = new Set([
   ...EXTENDED_TOOL_NAMES,
   ...CORE_TOOL_NAMES,
+  // Retired model tools remain recognizable in historical telemetry.
+  'read_messages',
+  'ack_events',
 ]);

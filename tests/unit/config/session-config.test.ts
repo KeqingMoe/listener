@@ -6,6 +6,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { loadAppConfig } from '../../../src/config/loader.ts';
 import { ConfigError } from '../../../src/config/errors.ts';
+import { toListenerConfig } from '../../../src/config/runtime.ts';
+import { inspectGroupConfig } from '../../../src/config/inspect.ts';
 import type { AppConfig } from '../../../src/config/app.ts';
 
 function fixture(t: { after(fn: () => void): void }) {
@@ -86,31 +88,116 @@ test('global model transport strictly accepts strings or an explicit responses i
   }
 });
 
-test('session defaults are local transcript bounds, not provider compaction or group enablement', (t) => {
+test('session defaults bound QQ events and local transcripts without enabling groups', (t) => {
   const app = fixture(t)(''),
     g = app.resolveGroup('11');
   assert.deepEqual(g.session, {
+    eventWindowSize: 20,
     maxTranscriptBytes: 524288,
   });
+  assert.equal(toListenerConfig(app, g).eventWindowSize, 20);
   assert.equal(g.enabled, false);
   assert.equal(app.models.get('main')!.model, 'fixture-model');
 });
 
 test('ordinary session fields inherit independently across configured and dynamic groups', (t) => {
   const app = fixture(t)(
-    '[models.main]\ntransport="responses"\n[defaults.session]\nmax_transcript_bytes=1048576\n[groups."11".session]\n[groups."22".session]\nmax_transcript_bytes=65536',
+    '[models.main]\ntransport="responses"\n[defaults.session]\nevent_window_size=40\nmax_transcript_bytes=1048576\n[groups."11".session]\nevent_window_size=10\n[groups."22".session]\nmax_transcript_bytes=65536',
   );
   assert.equal(app.models.get('main')!.transport, 'responses');
   assert.deepEqual(app.resolveGroup('11').session, {
+    eventWindowSize: 10,
     maxTranscriptBytes: 1048576,
   });
   assert.deepEqual(app.resolveGroup('22').session, {
+    eventWindowSize: 40,
     maxTranscriptBytes: 65536,
   });
+  for (const [id, expected] of [
+    ['11', 10],
+    ['22', 40],
+    ['99', 40],
+  ] as const) {
+    assert.equal(
+      toListenerConfig(app, app.resolveGroup(id)).eventWindowSize,
+      expected,
+    );
+  }
   const g = app.resolveGroup('99');
+  assert.equal(g.session.eventWindowSize, 40);
   assert.equal(g.session.maxTranscriptBytes, 1048576);
+  g.session.eventWindowSize = 1;
   g.session.maxTranscriptBytes = 65536;
+  assert.equal(app.resolveGroup('99').session.eventWindowSize, 40);
   assert.equal(app.resolveGroup('99').session.maxTranscriptBytes, 1048576);
+});
+
+test('event window accepts only positive safe integers in defaults and disabled groups', (t) => {
+  const load = fixture(t);
+  for (const scope of ['defaults.session', 'groups."11".session']) {
+    for (const value of [1, 20, 1000000, Number.MAX_SAFE_INTEGER]) {
+      const app = load(
+        `[groups."11"]\nenabled=false\n[${scope}]\nevent_window_size=${value}`,
+      );
+      assert.equal(app.resolveGroup('11').session.eventWindowSize, value);
+    }
+    for (const value of [
+      '0',
+      '-1',
+      '1.5',
+      '9007199254740992',
+      '"20"',
+      'true',
+      'nan',
+      'inf',
+      '[]',
+      '{}',
+    ]) {
+      assert.throws(
+        () =>
+          load(
+            `[groups."11"]\nenabled=false\n[${scope}]\nevent_window_size=${value}`,
+          ),
+        (e) =>
+          e instanceof ConfigError &&
+          (value === '9007199254740992' ||
+            e.message.includes('session.event_window_size')),
+      );
+    }
+  }
+});
+
+test('event window inspection reports program, defaults and group origins', (t) => {
+  const load = fixture(t);
+  const implicit = inspectGroupConfig(load(''), '11');
+  assert.equal(
+    (implicit.sources as Record<string, string>)['session.event_window_size'],
+    'program_default',
+  );
+  const app = load(
+    '[defaults.session]\nevent_window_size=40\n[groups."11".session]\nevent_window_size=10',
+  );
+  for (const [id, expected, origin] of [
+    ['11', 10, 'group'],
+    ['99', 40, 'defaults'],
+  ] as const) {
+    const inspected = inspectGroupConfig(app, id);
+    assert.equal(
+      (
+        (inspected.values as Record<string, unknown>).session as Record<
+          string,
+          unknown
+        >
+      ).event_window_size,
+      expected,
+    );
+    assert.equal(
+      (inspected.sources as Record<string, string>)[
+        'session.event_window_size'
+      ],
+      origin,
+    );
+  }
 });
 
 test('session rejects provider compaction settings as unknown fields', (t) => {

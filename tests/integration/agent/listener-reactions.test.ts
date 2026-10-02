@@ -17,7 +17,6 @@ import {
   type Memory,
   type TimelineEntry,
 } from '../../../src/contracts/messages.ts';
-import { type JsonObject } from '../../../src/contracts/json.ts';
 import { type ToolDefinition } from '../../../src/contracts/tools.ts';
 import type { ListenerConfig } from '../../../src/config/listener.ts';
 import {
@@ -84,7 +83,10 @@ function abortable<T>(promise: Promise<T>, signal?: AbortSignal): Promise<T> {
   });
 }
 
-const call = (name: string, args: unknown = {}) => ({
+const call = (
+  name: string,
+  args: unknown = name === 'finish' ? { mode: 'hard' } : {},
+) => ({
   id: `call_${name}`,
   type: 'function' as const,
   function: { name, arguments: JSON.stringify(args) },
@@ -348,7 +350,13 @@ test('one batch may react to several people and several emoji without creating f
   const s = setup({
     respond: (r) =>
       r.index === 0
-        ? complete(call('read_messages', { limit: 10 }))
+        ? complete(
+            call('read_events', {
+              limit: 10,
+              types: ['message.created'],
+              direction: 'forward',
+            }),
+          )
         : r.index === 1
           ? complete(react('1'), react('2', '128077'), silent())
           : complete(silent()),
@@ -358,11 +366,14 @@ test('one batch may react to several people and several emoji without creating f
     await s.receive(event('2', B));
     await settled(s, 2);
     assert.equal(s.requests.length, 2);
-    // 一次唤醒处理同一批两条消息：模型通过read_messages看到两位群友。
+    // 一次唤醒处理同一批两条消息：模型通过read_events看到两位群友。
     assert.deepEqual(
       results(s.requests[1]!)
         .at(-1)
-        .messages.map((m: JsonObject) => m.messageId),
+        .events.map(
+          (e: { payload: { message: { messageId: string } } }) =>
+            e.payload.message.messageId,
+        ),
       ['1', '2'],
     );
     assert.deepEqual(

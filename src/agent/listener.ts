@@ -73,7 +73,12 @@ import { annotateReactionReadResult } from './reaction-presentation.ts';
 import { normalizeOneBotEvent } from '../world/ingest.ts';
 
 import type { ModelSessionScope } from './session/store.ts';
-import { WorldTools, WORLD_TOOL_NAMES } from '../tools/world/tools.ts';
+import {
+  WorldTools,
+  WORLD_TOOL_NAMES,
+  chatConsumer,
+  projectWorldEvent,
+} from '../tools/world/tools.ts';
 import {
   ResponsesModel,
   ResponseStateExpiredError,
@@ -109,7 +114,6 @@ export class Listener {
   private readonly attention?: AttentionEngine;
   private attentionTimer?: NodeJS.Timeout;
   private readonly unread = new Map<number, BatchItem>();
-  private unreadOmitted = 0;
   private readonly reactionObservations?: ReactionObservations;
   private arrivalSequence = 0;
   private lastSealedSequence = 0;
@@ -141,7 +145,6 @@ export class Listener {
   private readonly groupRequests: GroupRequestTools;
   private readonly customFaces?: CustomFaceRuntime;
   private readonly ownsCustomFaces: boolean;
-  private readonly worldMessageSequences = new Map<string, number>();
   private worldWake: JsonObject = {};
   private worldBudget: () => JsonObject = () => ({});
   private lastRandomAt = -Infinity;
@@ -160,6 +163,7 @@ export class Listener {
     for (const [key, min, max] of [
       ['maxToolCallsPerWake', 1, Number.MAX_SAFE_INTEGER],
       ['wakeTimeoutMs', 1000, 600000],
+      ['eventWindowSize', 1, Number.MAX_SAFE_INTEGER],
     ] as const) {
       const value = input[key];
       if (
@@ -247,7 +251,6 @@ export class Listener {
     this.attentionTimer = undefined;
     this.attention?.clear();
     this.unread.clear();
-    this.unreadOmitted = 0;
     this.reactionObservations?.clear();
   }
 
@@ -264,7 +267,6 @@ export class Listener {
     this.unread.set(item.sequence, item);
     if (this.unread.size > 128) {
       this.unread.delete(Math.min(...this.unread.keys()));
-      this.unreadOmitted++;
     }
   }
 
@@ -348,26 +350,50 @@ export class Listener {
     }
   }
 
-  private acknowledgeObserved(through: number): void {
-    const acknowledged = (messageId: string) => {
-      const sequence = this.worldMessageSequences.get(messageId);
-      return sequence !== undefined && sequence <= through;
-    };
+  private clearReadCandidates(through: number): void {
+    const read = (item: BatchItem) =>
+      item.worldSequence !== undefined && item.worldSequence <= through;
     for (const [key, item] of this.unread) {
-      if (acknowledged(item.entry.messageId)) {
+      if (read(item)) {
         this.unread.delete(key);
       }
     }
-    const pending = this.pending;
-    // 有溢出时不丢弃批次：被省略的触发消息可能还没被处理到。
-    if (
-      pending &&
-      !pending.omittedMessages &&
-      !pending.omittedDirect &&
-      pending.items.every((item) => acknowledged(item.entry.messageId))
-    ) {
-      this.dropPending('observed_by_active_wake');
+    // 打开窗口会清掉截点前的未读，包括未展示的旧事件。
+    if (this.pending?.items.every(read)) {
+      this.dropPending('read_by_active_wake');
     }
+    this.armAttention();
+  }
+
+  private restoreChatRead(selfId: string): void {
+    const through = this.runtime.session.chatReadThrough(selfId);
+    const consumer = chatConsumer(selfId);
+    if (through > this.runtime.world.getState(consumer).observationWatermark) {
+      this.runtime.world.ack(consumer, through);
+    }
+  }
+
+  private deliverContext(selfId: string, force = false): boolean {
+    this.restoreChatRead(selfId);
+    const page = this.runtime.world.readUnreadEvents(
+      this.config.eventWindowSize ?? 20,
+      chatConsumer(selfId),
+    );
+    const delivered = this.runtime.session.appendContextUpdate(
+      selfId,
+      {
+        events: [...page.events].reverse().map(projectWorldEvent),
+        unread_count: page.unread,
+        omitted_count: Math.max(0, page.unread - page.events.length),
+        read_through: page.highWater,
+      },
+      { force },
+    );
+    if (delivered.appended) {
+      this.runtime.world.ack(chatConsumer(selfId), page.highWater);
+      this.clearReadCandidates(page.highWater);
+    }
+    return delivered.appended;
   }
 
   private dropPending(reason: string): void {
@@ -448,20 +474,10 @@ export class Listener {
       return;
     }
     const worldInput = normalizeOneBotEvent(event, selfId, 'onebot');
+    let worldSequence: number | undefined;
     if (worldInput) {
       try {
-        const stored = this.runtime.world.append(worldInput);
-        if (stored.payload.kind === 'message') {
-          this.worldMessageSequences.set(
-            stored.payload.message.messageId,
-            stored.sequence,
-          );
-          if (this.worldMessageSequences.size > 512) {
-            this.worldMessageSequences.delete(
-              this.worldMessageSequences.keys().next().value!,
-            );
-          }
-        }
+        worldSequence = this.runtime.world.append(worldInput).sequence;
       } catch {
         log('warn', 'message.world_store_failed', {
           reason: 'storage_failed',
@@ -620,12 +636,20 @@ export class Listener {
       entry,
       context,
       sequence,
+      worldSequence,
       received,
       ...(unverifiedQuote ? { unverifiedQuote: true } : {}),
       ...(triggered
         ? { trigger: mentioned ? ('mention' as const) : ('quote' as const) }
         : {}),
     };
+    // 引用核验可能跨过一次上下文投递；已经打开过的事件不再次唤醒。
+    if (
+      worldSequence !== undefined &&
+      worldSequence <= this.runtime.session.chatReadThrough(selfId)
+    ) {
+      return;
+    }
     let attentionHits: AttentionHit[] = [];
     if (attentionEligible) {
       this.rememberUnread(item);
@@ -864,7 +888,6 @@ export class Listener {
         this.interrupt('reset');
         this.memory?.clear();
         this.worldTools = undefined;
-        this.worldMessageSequences.clear();
         this.runtime.session.reset('owner_reset');
         (this.model as (Model & { reset?: () => void }) | undefined)?.reset?.();
         await this.sendText('本群对话记忆已清空。', context);
@@ -1321,13 +1344,6 @@ export class Listener {
         this.attention.evaluate(Date.now(), this.unreadItems().length > 0),
       );
     }
-    // 唤醒开始前封存本批丢弃的未读条数，随唤醒元数据交给模型。
-    const unreadOmitted = this.unreadOmitted;
-    for (const item of this.unreadItems()) {
-      this.unread.delete(item.sequence);
-    }
-    this.unreadOmitted = 0;
-    this.armAttention();
     this.pending = undefined;
     const trigger = { ...batch.primary, kind: batch.kind };
     this.running = true;
@@ -1382,7 +1398,7 @@ export class Listener {
         Date.now(),
         trigger.context.selfId,
       );
-      // 工具查询实时的本群world；批次在任何await之前封存，新到达的消息只进入下一批唤醒。
+      // 调度批次先封存；新增世界事件在工具批次结束后的安全边界投递。
       const sentEntries = new Map<string, TimelineEntry>();
       const workingMemory = withSentEntries(this.sessionMemory(), sentEntries);
       const moderationPolicy = this.config.tools.moderation;
@@ -1432,7 +1448,6 @@ export class Listener {
         ...(batch.omittedAttentionHits
           ? { omitted_plan_hits: batch.omittedAttentionHits }
           : {}),
-        ...(unreadOmitted ? { unread_omitted: unreadOmitted } : {}),
       };
       this.worldWake = {
         wakeId: batch.turnId,
@@ -1455,7 +1470,38 @@ export class Listener {
       });
       sessionStarted = true;
       sessionScope = session.state();
-      session.projectExternalEvents(trigger.context.selfId);
+      let openingContext = true;
+      const appendContext = () => {
+        try {
+          this.deliverContext(trigger.context.selfId, openingContext);
+        } catch (error) {
+          if (
+            !(error instanceof Error) ||
+            error.message !== 'session_resource_limit'
+          ) {
+            throw error;
+          }
+          // 只在完整工具结果后的输入边界轮换；既有工具绝不重放。
+          session.reset('transcript_resource_boundary');
+          if (this.model instanceof ResponsesModel) {
+            this.model.reset();
+          }
+          session.beginWake(system, presented, {
+            wake_id: batch.turnId,
+            group_id: this.groupId,
+            trigger: wakeTrigger,
+            wake_budget: wakeBudget(),
+            recovery: {
+              read_tools_again: true,
+              earlier_actions_may_have_completed: stats.toolCalls > 0,
+            },
+          });
+          sessionScope = session.state();
+          assistantSeq = undefined;
+          this.deliverContext(trigger.context.selfId, true);
+        }
+        openingContext = false;
+      };
       if (this.runtime.sandboxSummary) {
         const summary = this.runtime.sandboxSummary(
           trigger.context.selfId,
@@ -1549,6 +1595,7 @@ export class Listener {
           outcome = 'tool_budget_exhausted';
           break;
         }
+        appendContext();
         stats.modelRounds++;
         const requestMessages = session.messages();
         let response: Awaited<ReturnType<Model['complete']>>;
@@ -1585,6 +1632,7 @@ export class Listener {
             });
             sessionScope = session.state();
             assistantSeq = undefined;
+            openingContext = true;
             continue;
           }
           throw error;
@@ -1615,7 +1663,11 @@ export class Listener {
           }
           try {
             const args: unknown = JSON.parse(call.function.arguments);
-            return isObject(args) && keys(args, []);
+            return (
+              isObject(args) &&
+              keys(args, ['mode']) &&
+              (args.mode === 'soft' || args.mode === 'hard')
+            );
           } catch {
             return false;
           }
@@ -1647,6 +1699,7 @@ export class Listener {
             if (!terminal) {
               outcome = 'tool_budget_exhausted';
             }
+            session.skipPending('tool_budget_exhausted', sessionScope);
             break;
           }
           stats.toolCalls++;
@@ -1718,17 +1771,26 @@ export class Listener {
           if (
             call.function.name === 'finish' &&
             isObject(args) &&
-            keys(args, []) &&
+            keys(args, ['mode']) &&
+            (args.mode === 'soft' || args.mode === 'hard') &&
             !viewingImages &&
             !readingForward &&
             !transcribingVoice &&
             !wake.customFaceNeedsReview
           ) {
-            outcome = stats.sentMessages ? 'replied' : 'silent';
-            finished = true;
-            terminal = true;
-            traceResult({ status: 'ok' });
-            appendToolResult(call, { status: 'ok' });
+            const hasNewInput =
+              this.runtime.world.getState(chatConsumer(trigger.context.selfId))
+                .unreadEvents > 0 ||
+              session.hasExternalEvents(trigger.context.selfId);
+            const closed = args.mode === 'hard' || !hasNewInput;
+            traceResult({ status: 'ok', closed });
+            appendToolResult(call, { status: 'ok', closed });
+            session.skipPending('after_finish', sessionScope);
+            if (closed) {
+              outcome = stats.sentMessages ? 'replied' : 'silent';
+              finished = true;
+              terminal = true;
+            }
             break;
           }
           if (
@@ -1808,13 +1870,6 @@ export class Listener {
               trigger.context,
               controller.signal,
             );
-            if (
-              call.function.name === 'ack_events' &&
-              result.status === 'ok' &&
-              typeof result.observed_through === 'number'
-            ) {
-              this.acknowledgeObserved(result.observed_through);
-            }
             traceResult(result);
             appendToolResult(call, result);
             continue;

@@ -114,7 +114,10 @@ function abortable<T>(promise: Promise<T>, signal?: AbortSignal): Promise<T> {
   });
 }
 
-const tool = (name: string, args: unknown = {}): Completion => ({
+const tool = (
+  name: string,
+  args: unknown = name === 'finish' ? { mode: 'hard' } : {},
+): Completion => ({
   content: null,
   tool_calls: [
     {
@@ -142,7 +145,7 @@ const reply = (text: string, replyTo?: string): Completion => ({
     {
       id: 'finish',
       type: 'function',
-      function: { name: 'finish', arguments: '{}' },
+      function: { name: 'finish', arguments: '{"mode":"hard"}' },
     },
   ],
 });
@@ -360,7 +363,7 @@ test('same message IDs are independent and routing ignores private, unknown and 
     connected: false,
     complete: (r) =>
       r.index === 0
-        ? tool('read_messages', { limit: 10 })
+        ? tool('read_events', { limit: 10, types: ['message.created'] })
         : reply(`reply-${r.group}`, '1'),
   });
   try {

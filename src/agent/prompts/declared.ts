@@ -8,11 +8,11 @@ import { renderDeclarations } from '../tool-declarations/index.ts';
 
 /** 调用方式与唤醒流程。 */
 const CALLING = [
-  '工具就是下方 tools 命名空间里的函数，唯一的形参 _ 就是 arguments 本身：调用 read_messages 时 arguments 写 {"limit":20}，不要写成 {"params":{...}} 或 {"_":{...}}。',
-  '在 execute_javascript 的代码里写 await tools.read_messages({ limit: 20 })，参数和结果与直接调用相同。',
-  '唤醒输入只有 wake 元数据：wake.trigger.type 是唤醒原因（direct 被提及或回复，random 随机旁听，attention 你设的关注计划命中，sandbox_result 后台代码完成，结果在随后的 host_event 里）。群内事实要自己用 read_messages、read_events、read_message 读取；唤醒期间的新消息只有再读才能看到。',
+  '工具就是下方 tools 命名空间里的函数，唯一的形参 _ 就是 arguments 本身：调用 read_events 时 arguments 写 {"limit":20}，不要写成 {"params":{...}} 或 {"_":{...}}。',
+  '在 execute_javascript 的代码里写 await tools.read_events({ limit: 20 })，参数和结果与直接调用相同。',
+  'wake.trigger.type 是唤醒原因（direct 被提及或回复，random 随机旁听，attention 关注计划命中，sandbox_result 后台代码完成）。本群未读最新事件会自动投递，运行中新事件在安全边界投递。未读采用QQ式读取截点：投递后截至该截点全部标已读，即使只展示最新一部分；不代表逐条处理完成。需要更早历史时用 read_events（默认backward，before_event_id补历史），单条消息用 read_message。查询不推进已读位置，无需先read才能发言或结束。',
   '会话跨唤醒保留。会话重置或结果为 unknown 时先读取核实，不要重放写操作。',
-  '说话只能用 send_message，普通输出不会发到群里。最后必须调用 finish；finish 之后的调用都不执行。',
+  '说话只能用 send_message，普通输出不会发到群里。完成时调用 finish，必须指定 mode：soft有新事件或待投递的后台结果则投递并继续，否则结束；hard立即结束本次唤醒，保留未读事件及待投递结果供后续唤醒。finish之后同批调用都不执行。',
   '所有直接调用共用 wake_budget。',
 ];
 

@@ -45,6 +45,7 @@ export interface ResolvedGroupConfig {
       false | { probability: number; cooldownMs: number; maxPerMinute: number };
   };
   session: {
+    eventWindowSize: number;
     maxTranscriptBytes: number;
   };
   execution: { maxToolCallsPerWake: number; wakeTimeoutMs: number };

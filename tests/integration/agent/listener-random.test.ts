@@ -87,7 +87,10 @@ function event(
   };
 }
 
-function tool(name: string, args: unknown = {}): Completion {
+function tool(
+  name: string,
+  args: unknown = name === 'finish' ? { mode: 'hard' } : {},
+): Completion {
   return {
     content: null,
     tool_calls: [
@@ -202,7 +205,13 @@ function lastToolResult(messages: readonly ChatMessage[]) {
 function readThenFinish(): Model['complete'] {
   let rounds = 0;
   return async () =>
-    ++rounds === 1 ? tool('read_messages', { limit: 100 }) : tool('finish');
+    ++rounds === 1
+      ? tool('read_events', {
+          limit: 100,
+          types: ['message.created'],
+          direction: 'forward',
+        })
+      : tool('finish');
 }
 
 async function until(check: () => boolean) {
@@ -430,8 +439,9 @@ test('pending random upgrades to direct and retains every caller in arrival orde
     assert.equal(s.requests.length, 2, 'one wake: read then finish');
     assert.equal(trigger(s), 'direct');
     assert.deepEqual(
-      lastToolResult(s.requests[1]!.messages).messages.map(
-        (m: TimelineEntry) => m.messageId,
+      lastToolResult(s.requests[1]!.messages).events.map(
+        (e: { payload: { message: { messageId: string } } }) =>
+          e.payload.message.messageId,
       ),
       ['1', '2', '3'],
     );

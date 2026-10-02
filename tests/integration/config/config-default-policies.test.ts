@@ -164,8 +164,6 @@ test('all 61 optional tools have the approved defaults; opening tools never open
     'get_wake_state',
     'get_time',
     'read_events',
-    'read_messages',
-    'ack_events',
   ]) {
     assert.ok(definitions.includes(name), name);
   }
@@ -249,8 +247,6 @@ test('the public tool reference lists every capability with its actual default a
       'get_wake_state',
       'get_time',
       'read_events',
-      'read_messages',
-      'ack_events',
       'finish',
     ].sort(),
   );
@@ -474,7 +470,7 @@ test('default poke dispatches directly but default daily moderation waits for th
         };
       }
       results = outputs.map((m) => JSON.parse(String(m.content)));
-      return { content: null, tool_calls: [call('finish', {})] };
+      return { content: null, tool_calls: [call('finish', { mode: 'hard' })] };
     },
   };
   const bot = new Listener(

@@ -48,7 +48,10 @@ function gate<T>() {
 
 const silent = (): Completion => tool('finish');
 
-function tool(name: string, args: unknown = {}): Completion {
+function tool(
+  name: string,
+  args: unknown = name === 'finish' ? { mode: 'hard' } : {},
+): Completion {
   return {
     content: null,
     tool_calls: [
@@ -414,7 +417,7 @@ test('new caller during first send does not cancel later single-message calls be
 });
 
 for (const phase of ['model', 'tool'] as const) {
-  test(`arrivals during ${phase} are live-readable yet form the next wake instead of joining the active one`, async () => {
+  test(`arrivals during ${phase} are delivered before the next step and consume their pending wake`, async () => {
     const held = gate<void>();
     let rounds = 0;
     let toolStarted = false;
@@ -449,15 +452,18 @@ for (const phase of ['model', 'tool'] as const) {
       await s.bot.receive(event('2'), self);
       held.resolve();
       const finalRound = phase === 'tool' ? 2 : 1;
-      await until(() => s.requests.length >= finalRound + 2);
-      // 会话模式读取实时world：活动唤醒内可读到新消息，但不自动注入。
+      await until(() => s.requests.length === finalRound + 1);
       assert.equal(result(s, finalRound).status, 'ok');
       assert.equal(result(s, finalRound).message.messageId, '2');
       assert.equal(wakeId(s, finalRound), wakeId(s));
-      // 新呼唤不并入活动唤醒，而是单独触发下一次唤醒。
-      assert.notEqual(wakeId(s, finalRound + 1), wakeId(s));
-      assert.equal(trigger(s, finalRound + 1), 'direct');
-      assert.equal(wakes(s), 2);
+      const updates = s.requests[1]!.messages.filter(
+        (m) =>
+          m.role === 'user' && String(m.content).includes('context_update'),
+      );
+      assert.match(String(updates.at(-1)!.content), /body-2/);
+      await delay(40);
+      assert.equal(s.requests.length, finalRound + 1);
+      assert.equal(wakes(s), 1);
       assert.equal(
         s.calls.some((c) => c.action === 'get_msg'),
         false,
@@ -664,7 +670,7 @@ test('queued caller and its quote reference remain resolvable after raw history 
   }
 });
 
-test('late verified quote is excluded from active context and deferred as its own caller', async () => {
+test('late quote verification does not requeue an event already delivered at opening', async () => {
   const lookup = gate<unknown>();
   const active = gate<Completion>();
   let rounds = 0;
@@ -688,10 +694,10 @@ test('late verified quote is excluded from active context and deferred as its ow
     assert.equal(s.requests.length, 1);
     assert.equal(s.requests[0]!.signal!.aborted, false);
     active.resolve(silent());
-    await until(() => s.requests.length === 2);
-    // 迟到核验的引用呼唤不并入活动唤醒，而是单独成为下一次唤醒。
-    assert.equal(wakes(s), 2);
-    assert.equal(trigger(s, 1), 'direct');
+    assert.match(JSON.stringify(s.requests[0]!.messages), /body-1/);
+    await delay(40);
+    assert.equal(s.requests.length, 1);
+    assert.equal(wakes(s), 1);
   } finally {
     lookup.resolve({});
     active.resolve(silent());

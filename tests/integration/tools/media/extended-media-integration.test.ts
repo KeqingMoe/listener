@@ -364,7 +364,7 @@ test('real Listener sends normalized image and can read/forward its actual self 
       assert.match(JSON.stringify(result(messages, 'read-self')), /img_9001_0/);
       assert.equal(result(messages, 'forward-self').status, 'executed');
       return completion(
-        call('done', 'finish'),
+        call('done', 'finish', { mode: 'hard' }),
         call('never', 'send_group_image', imageArgs),
       );
     },
@@ -431,7 +431,7 @@ test('merged ACK persists stable forward reference, not its native resource toke
     respond: () =>
       completion(
         call('merged', 'send_group_forward', { message_ids: ['1', '1'] }),
-        call('done', 'finish'),
+        call('done', 'finish', { mode: 'hard' }),
       ),
   });
   try {
@@ -472,7 +472,7 @@ test('single native forward null counts as replied but never creates an invented
     respond: () =>
       completion(
         call('single', 'forward_message', forwardArgs),
-        call('done', 'finish'),
+        call('done', 'finish', { mode: 'hard' }),
       ),
   });
   try {
@@ -519,7 +519,7 @@ for (const interruption of ['disconnect', 'stop'] as const) {
         completion(
           call('late', 'send_group_image', imageArgs),
           call('never', 'send_group_forward', mergeArgs),
-          call('done', 'finish'),
+          call('done', 'finish', { mode: 'hard' }),
         ),
     });
     try {
@@ -611,7 +611,7 @@ for (const reading of ['view_images', 'read_forward'] as const) {
           ...actions.map(([id, name, args]) =>
             call(`reviewed-${id}`, name, args),
           ),
-          call('done', 'finish'),
+          call('done', 'finish', { mode: 'hard' }),
         );
       },
     });
@@ -675,7 +675,7 @@ test('default-off capabilities and foreign native origins never dispatch media w
           call('image', 'send_group_image', imageArgs),
           call('single', 'forward_message', forwardArgs),
           call('merged', 'send_group_forward', mergeArgs),
-          call('done', 'finish'),
+          call('done', 'finish', { mode: 'hard' }),
         ),
     });
     try {
@@ -731,7 +731,7 @@ test('uncertain media result and duplicate remain unknown in persisted tool ledg
       assert.equal(result(messages, 'first').status, 'unknown');
       return completion(
         call('duplicate', 'send_group_forward', mergeArgs),
-        call('done', 'finish'),
+        call('done', 'finish', { mode: 'hard' }),
       );
     },
   });

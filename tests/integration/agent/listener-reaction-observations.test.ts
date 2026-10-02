@@ -79,7 +79,10 @@ const notice = (id: string, group = GROUP) => ({
   likes: [{ emoji_id: '76', count: 999999 }],
   is_add: true,
 });
-const call = (name: string, args: unknown = {}) => ({
+const call = (
+  name: string,
+  args: unknown = name === 'finish' ? { mode: 'hard' } : {},
+) => ({
   id: `call_${name}`,
   type: 'function' as const,
   function: { name, arguments: JSON.stringify(args) },

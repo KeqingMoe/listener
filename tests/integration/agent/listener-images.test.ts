@@ -154,7 +154,10 @@ function setup(
       requests.push(structuredClone(messages));
       schemas.push(tools?.map((t) => t.function.name) ?? []);
       onComplete?.(requests.length);
-      return responses.shift() ?? completion(call('silent', 'finish', {}));
+      return (
+        responses.shift() ??
+        completion(call('silent', 'finish', { mode: 'hard' }))
+      );
     },
   };
   const bot = new Listener(
@@ -211,7 +214,7 @@ function assertNativeSequence(messages: ChatMessage[], ids: string[]) {
 test('native image viewing uses same model then sends; memory holds only image references', async () => {
   const s = setup([
     completion(view()),
-    completion(send(), call('finish', 'finish', {})),
+    completion(send(), call('finish', 'finish', { mode: 'hard' })),
   ]);
   try {
     await s.bot.receive(event(), self);
@@ -251,7 +254,10 @@ test('mixed view/send/read batch responds to every call before image user conten
         ];
     const s = setup([
       completion(...batch),
-      completion(send('verified reply'), call('finish', 'finish', {})),
+      completion(
+        send('verified reply'),
+        call('finish', 'finish', { mode: 'hard' }),
+      ),
     ]);
     let sentBeforeSecond = false;
     s.setOnComplete((round) => {
@@ -286,7 +292,7 @@ test('quoted image is discovered through read_message then remotely verified bef
   const s = setup([
     completion(call('read', 'read_message', { message_id: '2' })),
     completion(view(['img_2_1'])),
-    completion(send(), call('finish', 'finish', {})),
+    completion(send(), call('finish', 'finish', { mode: 'hard' })),
   ]);
   try {
     await s.bot.receive(
@@ -326,7 +332,10 @@ test('quoted image is discovered through read_message then remotely verified bef
 
 test('disabled images hide schema and reject forged view calls without API or downloader', async () => {
   const s = setup(
-    [completion(view()), completion(call('silent', 'finish', {}))],
+    [
+      completion(view()),
+      completion(call('silent', 'finish', { mode: 'hard' })),
+    ],
     {
       toolPermissions: {
         ...cfg.toolPermissions,
@@ -353,7 +362,7 @@ test('image state deduplicates successful loads across model calls without a cou
     completion(view(['img_1_1'], 'v1')),
     completion(view(['img_1_1', 'img_1_2'], 'v2')),
     completion(view(['img_1_3'], 'v3')),
-    completion(send(), call('finish', 'finish', {})),
+    completion(send(), call('finish', 'finish', { mode: 'hard' })),
   ]);
   try {
     await s.bot.receive(

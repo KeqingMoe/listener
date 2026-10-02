@@ -123,6 +123,7 @@ model = "friend"
 | `reply.delay_ms` | [1200, 3000] | 合批等待区间；两个整数，下界0..5000，上界0..10000，上界不得小于下界；[0,0]不额外等待 |
 | `reply.cooldown_ms` | 5000 | 范围1000..60000 |
 | `reply.random` | false | 随机参与关闭；开启用参数对象，不能写true |
+| `session.event_window_size` | 20 | 安全正整数，范围1..9007199254740991；打开时投递的最新未读QQ事件数及运行期QQ缓冲容量，异步结果不占此限 |
 | `session.max_transcript_bytes` | 524288 | 范围65536..8388608；本地模型会话容量，不是服务商的token窗口 |
 | `execution.max_tool_calls_per_wake` | 96 | 安全正整数，范围1..9007199254740991；一次唤醒全部工具共享 |
 | `execution.wake_timeout_ms` | 240000 | 范围1000..600000；一次完整唤醒的时间预算 |
@@ -346,9 +347,7 @@ napcat_artifact_directory = "/qqbot-artifacts"
 | `get_wake_state` | Bot辅助 | 查看本轮为何被唤醒、当前身份、未读事件概况和执行预算。 |
 | `get_time` | Bot辅助 | 查询当前时间。 |
 | `read_events` | Bot辅助 | 读取本地保存的本群消息、撤回、成员变动等事件。 |
-| `read_messages` | Bot辅助 | 读取本地保存的本群消息，不是任意QQ远端历史搜索。 |
-| `ack_events` | Bot辅助 | 推进Bot已观察事件的位置，不是向QQ发送消息已读回执。 |
-| `finish` | Bot辅助 | 结束本轮处理；可以不发言，结束后不再执行本轮工具。 |
+| `finish` | Bot辅助 | `mode="soft"` 有新内容时继续处理，否则结束；`mode="hard"` 立即结束。可以不发言。 |
 
 已有显式模式会覆盖默认模式。`direct` 并不要求主人先发言，但也不授予QQ实际没有的权限；设置管理员和专属头衔等操作需要Bot具有群主权限。
 

@@ -266,7 +266,7 @@ test('JS exposes reply_to while internal messages and OneBot replies retain thei
   }
 });
 
-for (const kind of ['messages', 'events'] as const) {
+for (const kind of ['events'] as const) {
   test(`JS read_${kind} retains cursors across calls and jobs without relaxing scope or filters`, async () => {
     const h = host();
     try {
@@ -280,7 +280,7 @@ for (const kind of ['messages', 'events'] as const) {
         });
       }
       const first = await h.run(`
-        const first = await tools.read_${kind}({limit:1});
+        const first = await tools.read_${kind}({limit:1,direction:'forward'});
         const second = await tools.read_${kind}({limit:1,cursor:first.next_cursor});
         return JSON.stringify({first,second});`);
       assert.equal(first.status, 'completed', JSON.stringify(first));
@@ -288,9 +288,7 @@ for (const kind of ['messages', 'events'] as const) {
         (first as { value: string }).value,
       );
       const ids = (page: any) =>
-        page[kind].map((item: any) =>
-          kind === 'messages' ? item.messageId : item.payload.message.messageId,
-        );
+        page.events.map((item: any) => item.payload.message.messageId);
       assert.equal(page1.status, 'ok');
       assert.equal(page2.status, 'ok');
       assert.deepEqual(ids(page1), ['1']);
@@ -300,10 +298,10 @@ for (const kind of ['messages', 'events'] as const) {
       const next = await h.run(`
         const page = await tools.read_${kind}({limit:1,cursor:${cursor}});
         const filters = await tools.read_${kind}({limit:1,cursor:${cursor},direction:'forward'});
-        const wrongKind = await tools.read_${kind === 'messages' ? 'events' : 'messages'}({limit:1,cursor:${cursor}});
-        return JSON.stringify({page,filters,wrongKind});`);
+        const removed = [typeof tools.read_messages, typeof tools.ack_events];
+        return JSON.stringify({page,filters,removed});`);
       assert.equal(next.status, 'completed', JSON.stringify(next));
-      const { page, filters, wrongKind } = JSON.parse(
+      const { page, filters, removed } = JSON.parse(
         (next as { value: string }).value,
       );
       assert.equal(page.status, 'ok');
@@ -311,7 +309,7 @@ for (const kind of ['messages', 'events'] as const) {
       assert.equal(page.next_cursor, undefined);
       assert.equal(filters.error, 'invalid_arguments');
       assert.equal(filters.reason_code, 'cursor_with_filters');
-      assert.deepEqual(wrongKind, { status: 'error', error: 'invalid_cursor' });
+      assert.deepEqual(removed, ['undefined', 'undefined']);
       for (const [scope, error] of [
         [{ selfId: self, groupId: '654321' }, 'host_unavailable'],
         [{ selfId: '888', groupId: group }, 'forbidden_group'],
@@ -358,7 +356,7 @@ test(
   'JS-initialized world tools also serve the direct model path with live wake callbacks',
   { timeout: 10000 },
   async () => {
-    let cursor: string, ackCursor: string;
+    let cursor: string;
     let turn = 0;
     let resolve!: (results: any[]) => void;
     const observed = new Promise<any[]>((done) => {
@@ -370,8 +368,7 @@ test(
           return {
             content: null,
             tool_calls: [
-              ['read_messages', { limit: 1, cursor }],
-              ['ack_events', { ack_cursor: ackCursor }],
+              ['read_events', { limit: 1, cursor }],
               ['get_wake_state', {}],
             ].map(([name, args], i) => ({
               id: `direct_${i}`,
@@ -394,7 +391,7 @@ test(
             {
               id: 'done',
               type: 'function',
-              function: { name: 'finish', arguments: '{}' },
+              function: { name: 'finish', arguments: '{"mode":"hard"}' },
             },
           ],
         };
@@ -410,16 +407,14 @@ test(
           time: Date.now() / 1000,
         });
       }
-      // ack_events remains model-only; JS returns its read token to that path.
-      const first = await h.run(`return JSON.stringify([
-        await tools.read_messages({limit:1}), await tools.read_events({limit:2})
-      ]);`);
+      const first = await h.run(`return JSON.stringify(
+        await tools.read_events({limit:1,direction:'forward'})
+      );`);
       assert.equal(first.status, 'completed', JSON.stringify(first));
-      const [messages, events] = JSON.parse((first as { value: string }).value);
-      cursor = messages.next_cursor;
-      ackCursor = events.ack_cursor;
+      const events = JSON.parse((first as { value: string }).value);
+      cursor = events.next_cursor;
       assert.match(cursor, /^wc_/);
-      assert.match(ackCursor, /^wa_/);
+      assert.equal(events.ack_cursor, undefined);
       await h.bot.receive(
         {
           post_type: 'message',
@@ -437,14 +432,14 @@ test(
         },
         self,
       );
-      const [page, ack, wake] = await observed;
-      assert.equal(ack.status, 'ok');
-      assert.equal(ack.observed_through, events.high_water);
+      const [page, wake] = await observed;
       assert.equal(page.status, 'ok');
       assert.deepEqual(
-        page.messages.map((m: any) => m.messageId),
+        page.events.map((e: any) => e.payload.message.messageId),
         ['2'],
       );
+      assert.ok(wake.read_through > events.high_water);
+      assert.equal(wake.unread_count, 0);
       assert.equal(wake.status, 'ok');
       assert.ok(wake.wake_budget.remaining_tool_calls > 0);
       assert.ok(wake.trigger);

@@ -31,7 +31,11 @@ const GROUP = '123456',
   SELF = '999',
   ACTOR = '111',
   OTHER = '222';
-const call = (id: string, name: string, args: JsonObject = {}) => ({
+const call = (
+  id: string,
+  name: string,
+  args: JsonObject = name === 'finish' ? { mode: 'hard' } : {},
+) => ({
   id,
   type: 'function' as const,
   function: { name, arguments: JSON.stringify(args) },

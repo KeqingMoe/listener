@@ -27,8 +27,11 @@ export const CHAT_TOOLS: ToolDefinition[] = [
     function: {
       name: 'finish',
       description:
-        '明确结束本次唤醒。未发消息时保持沉默，已发送或操作后表示完成；其后的所有工具调用不执行。',
-      parameters: objectSchema({}, []),
+        '完成当前工作。mode必填：soft有新事件或待投递的后台结果时投递并继续，否则结束本次唤醒；hard立即结束本次唤醒，保留未读事件及待投递结果供后续唤醒。两者之后同批工具调用都不执行；不发消息即保持沉默。',
+      parameters: objectSchema(
+        { mode: { type: 'string', enum: ['soft', 'hard'] } },
+        ['mode'],
+      ),
     },
   },
   ...GROUP_TOOLS,
@@ -93,6 +96,5 @@ export const SANDBOX_EXCLUDED_TOOLS: readonly string[] = [
   'finish',
   'manage_attention',
   'get_wake_state',
-  'ack_events',
   'execute_javascript',
 ];

@@ -90,7 +90,7 @@ test(
       });
     const send = (body: string) =>
       op('send_message', { segments: [{ type: 'text', text: body }] });
-    const finish = () => op('finish', {});
+    const finish = () => op('finish', { mode: 'hard' });
     const http = createServer((req, res) => {
       void (async () => {
         let source = '';
@@ -110,7 +110,7 @@ test(
         let next: ReturnType<typeof op>;
         if (requests.length === 1) {
           assert.equal(pages, 0);
-          assert.ok(!source.includes('fixture initial request'));
+          assert.ok(source.includes('fixture initial request'));
           assert.equal(
             Object.hasOwn(
               JSON.parse(
@@ -127,8 +127,8 @@ test(
         } else if (requests.length === 3) {
           assert.equal(pages, 0);
           const wake = body.messages.findLast((m: any) => m.role === 'user');
-          assert.ok(!wake.content.includes('我给你点了赞'));
-          next = op('read_messages', { limit: 100 });
+          assert.ok(wake.content.includes('我给你点了赞'));
+          next = op('read_events', { limit: 100 });
         } else if (requests.length === 4) {
           assert.ok(source.includes('我给你点了赞'));
           assert.equal(

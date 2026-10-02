@@ -390,6 +390,7 @@ function policy(
     'random',
   ]);
   const session = table(raw.session, `${path}.session`, [
+    'event_window_size',
     'max_transcript_bytes',
   ]);
   const execution = table(raw.execution, `${path}.execution`, [
@@ -513,6 +514,14 @@ function policy(
       random,
     },
     session: {
+      eventWindowSize: num(
+        session,
+        'event_window_size',
+        `${path}.session`,
+        defaults?.session.eventWindowSize ?? 20,
+        1,
+        Number.MAX_SAFE_INTEGER,
+      ),
       maxTranscriptBytes: num(
         session,
         'max_transcript_bytes',

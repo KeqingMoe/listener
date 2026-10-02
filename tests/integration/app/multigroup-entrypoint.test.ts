@@ -104,7 +104,9 @@ test(
         assert.equal(wake.group_id, group);
         assert.ok(!JSON.stringify(wake).includes('fixture-body'));
         assert.ok(
-          body.tools.some((t: any) => t.function.name === 'read_messages'),
+          !body.tools.some((t: any) =>
+            ['read_messages', 'ack_events'].includes(t.function.name),
+          ),
         );
         assert.ok(
           body.tools.some((t: any) => t.function.name === 'read_events'),
@@ -114,7 +116,7 @@ test(
             id: `read_${requests.length}`,
             type: 'function',
             function: {
-              name: 'read_messages',
+              name: 'read_events',
               arguments: JSON.stringify({ limit: 100 }),
             },
           };
@@ -172,7 +174,7 @@ test(
                   {
                     id: `finish_${requests.length}`,
                     type: 'function',
-                    function: { name: 'finish', arguments: '{}' },
+                    function: { name: 'finish', arguments: '{"mode":"hard"}' },
                   },
                 ],
               },
@@ -404,23 +406,11 @@ enabled = true
       );
       for (const request of requests) {
         const all = JSON.stringify(request.body.messages);
-        const hasTool = request.body.messages.some(
-          (m: any) => m.role === 'tool',
+        assert.ok(
+          all.includes(
+            request.group === A ? 'only-A-fixture-body' : 'only-B-fixture-body',
+          ),
         );
-        if (hasTool) {
-          assert.ok(
-            all.includes(
-              request.group === A
-                ? 'only-A-fixture-body'
-                : 'only-B-fixture-body',
-            ),
-          );
-        } else {
-          assert.ok(
-            !all.includes('only-A-fixture-body') &&
-              !all.includes('only-B-fixture-body'),
-          );
-        }
         assert.ok(
           !all.includes(
             request.group === A ? 'only-B-fixture-body' : 'only-A-fixture-body',

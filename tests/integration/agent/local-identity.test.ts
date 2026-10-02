@@ -156,7 +156,7 @@ test('Listener instances use independent local owners for prompt identity, reset
           content: null,
           tool_calls: [
             tool('mute_member', { user_id: TARGET, seconds: 60 }),
-            tool('finish', {}),
+            tool('finish', { mode: 'hard' }),
           ],
         };
       },

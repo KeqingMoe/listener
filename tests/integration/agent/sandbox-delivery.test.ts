@@ -35,7 +35,7 @@ const done = (): Completion => ({
     {
       id: 'finish-' + Math.random(),
       type: 'function',
-      function: { name: 'finish', arguments: '{}' },
+      function: { name: 'finish', arguments: '{"mode":"hard"}' },
     },
   ],
 });
@@ -108,6 +108,14 @@ async function settled(f: ReturnType<typeof fixture>, count: number) {
   assert.fail('sandbox host wake failed');
 }
 
+function jobResults(messages: ChatMessage[]) {
+  return messages
+    .filter((m) => m.role === 'user')
+    .flatMap((m) => JSON.parse(String(m.content)).context_update?.items ?? [])
+    .filter((item) => item.type === 'job_result')
+    .map((item) => item.result);
+}
+
 test('idle host delivery wakes without QQ message, acknowledges projection and rejects other scope', async () => {
   const f = fixture();
   try {
@@ -120,7 +128,7 @@ test('idle host delivery wakes without QQ message, acknowledges projection and r
       JSON.parse(String(m.content)),
     );
     assert.equal(
-      users.filter((m) => m.host_event?.job_id === 'job_test').length,
+      jobResults(f.requests[0]!).filter((r) => r.job_id === 'job_test').length,
       1,
     );
     assert.equal(f.requests[0]!.filter((m) => m.role === 'tool').length, 0);
@@ -156,11 +164,11 @@ test('background failure carries bounded guest diagnostics into model context', 
       diagnostic,
     });
     await settled(f, 1);
-    const payload = f.requests[0]!.filter((m) => m.role === 'user')
-      .map((m) => JSON.parse(String(m.content)))
-      .find((m) => m.host_event?.job_id === 'diagnostic');
-    assert.deepEqual(payload.host_event.diagnostic, diagnostic);
-    assert.equal(payload.host_event.error, 'execution_error');
+    const payload = jobResults(f.requests[0]!).find(
+      (r) => r.job_id === 'diagnostic',
+    );
+    assert.deepEqual(payload.diagnostic, diagnostic);
+    assert.equal(payload.error, 'execution_error');
   } finally {
     await f.close();
   }
@@ -175,10 +183,10 @@ test('escaped maximum string result projects intact rather than remaining undeli
       false,
     );
     await settled(f, 1);
-    const payload = f.requests[0]!.filter((m) => m.role === 'user')
-      .map((m) => JSON.parse(String(m.content)))
-      .find((m) => m.host_event?.job_id === 'escaped');
-    assert.equal(payload.host_event.value, value);
+    const payload = jobResults(f.requests[0]!).find(
+      (r) => r.job_id === 'escaped',
+    );
+    assert.equal(payload.value, value);
     assert.equal(
       await f.bot.receiveSandboxResult({ ...result('escaped'), value }),
       true,

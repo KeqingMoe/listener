@@ -403,7 +403,7 @@ test('owner reset during send preserves a late ACK as a world fact without finis
           call('send', 'send_message', {
             segments: [{ type: 'text', text: 'synthetic' }],
           }),
-          call('finish', 'finish'),
+          call('finish', 'finish', { mode: 'hard' }),
         );
       },
     },

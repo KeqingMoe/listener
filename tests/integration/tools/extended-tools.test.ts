@@ -502,7 +502,7 @@ test('Listener rejects raw disabled names and checkpoints the result without nat
     respond: () =>
       completion(
         call('disabled', 'set_group_name', { name: 'must not apply' }),
-        call('done', 'finish'),
+        call('done', 'finish', { mode: 'hard' }),
       ),
   });
   try {
@@ -531,7 +531,7 @@ test('readonly extension can complete with send and finish without creating a ma
         call('send', 'send_message', {
           segments: [{ type: 'text', text: 'reply after read' }],
         }),
-        call('done', 'finish'),
+        call('done', 'finish', { mode: 'hard' }),
       ),
   });
   try {
@@ -566,7 +566,7 @@ test('readonly native failure stays sanitized and does not impose the write revi
         call('send', 'send_message', {
           segments: [{ type: 'text', text: 'read was unavailable' }],
         }),
-        call('done', 'finish'),
+        call('done', 'finish', { mode: 'hard' }),
       ),
   });
   try {
@@ -610,7 +610,7 @@ for (const budget of [96, 5]) {
           assert.equal(r.delivery_confirmed, false);
           assert.equal(r.cached, undefined);
         }
-        return completion(call('done', 'finish'));
+        return completion(call('done', 'finish', { mode: 'hard' }));
       },
     });
     try {
@@ -639,7 +639,17 @@ test('unknown write blocks prewritten send in same response, permits reviewed se
     },
     respond: (messages, round) => {
       if (round === 1) {
-        assert.doesNotMatch(JSON.stringify(messages), /PRIVATE_TRIGGER/);
+        assert.match(
+          JSON.stringify(
+            messages.filter(
+              (m) =>
+                m.role === 'user' &&
+                typeof m.content === 'string' &&
+                JSON.parse(m.content).context_update,
+            ),
+          ),
+          /PRIVATE_TRIGGER/,
+        );
         return completion(
           call('poke', 'poke_member', { user_id: actor }),
           call('prewritten', 'send_message', {
@@ -657,7 +667,7 @@ test('unknown write blocks prewritten send in same response, permits reviewed se
         call('reviewed', 'send_message', {
           segments: [{ type: 'text', text: 'result remains uncertain' }],
         }),
-        call('done', 'finish'),
+        call('done', 'finish', { mode: 'hard' }),
       );
     },
   });
@@ -682,7 +692,7 @@ test('finish terminates before trailing enabled write and read extensions', asyn
     extended: { set_group_name: 'direct', get_group_info: 'direct' },
     respond: () =>
       completion(
-        call('done', 'finish'),
+        call('done', 'finish', { mode: 'hard' }),
         call('trailing-write', 'set_group_name', { name: 'never' }),
         call('trailing-read', 'get_group_info'),
       ),
@@ -715,7 +725,7 @@ test('extended tools consume the shared wake budget, not one allowance per nativ
       completion(
         call('info', 'get_group_info'),
         call('tail', 'set_group_name', { name: 'never' }),
-        call('done', 'finish'),
+        call('done', 'finish', { mode: 'hard' }),
       ),
   });
   try {
@@ -751,7 +761,7 @@ test('cancelled wake retains late confirmed extension ACK and resolves trailing 
         call('tail', 'send_message', {
           segments: [{ type: 'text', text: 'never' }],
         }),
-        call('done', 'finish'),
+        call('done', 'finish', { mode: 'hard' }),
       ),
   });
   try {

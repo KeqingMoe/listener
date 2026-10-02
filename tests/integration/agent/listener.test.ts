@@ -103,7 +103,7 @@ function reply(text: string): Completion {
   result.tool_calls.push({
     id: 'finish',
     type: 'function',
-    function: { name: 'finish', arguments: '{}' },
+    function: { name: 'finish', arguments: '{"mode":"hard"}' },
   });
   return result;
 }
@@ -132,7 +132,7 @@ function setup(
     async complete(messages, tools) {
       requests.push(messages);
       toolNames.push(tools?.map((t) => t.function.name) ?? []);
-      return responses.shift() ?? tool('finish', {});
+      return responses.shift() ?? tool('finish', { mode: 'hard' });
     },
   };
   const bot = new Listener(
@@ -214,7 +214,7 @@ test('ordinary completion text never leaks as a QQ message', async () => {
 });
 
 test('duplicate events do not produce two turns and only literal at self triggers', async () => {
-  const s = setup([tool('finish', {})]);
+  const s = setup([tool('finish', { mode: 'hard' })]);
   try {
     await s.bot.receive(
       event({
@@ -383,14 +383,17 @@ test('new ordinary message neither cancels active reply nor enters its frozen pr
     );
     assert.ok(s.memory.find('2'));
   } finally {
-    release?.(tool('finish', {}));
+    release?.(tool('finish', { mode: 'hard' }));
     await bot.stop();
     await s.bot.stop();
   }
 });
 
 test('nonowner cannot clear memory; owner reset clears and nicknames cannot enable default-off abilities', async () => {
-  const s = setup([tool('read_messages', { limit: 10 }), tool('finish', {})]);
+  const s = setup([
+    tool('read_events', { limit: 10, types: ['message.created'] }),
+    tool('finish', { mode: 'hard' }),
+  ]);
   try {
     await s.bot.receive(event({ sender: { nickname: '示例群友' } }), self);
     await until(() => s.requests.length === 2);
@@ -581,7 +584,7 @@ test('mention and quote trigger switches are honored with random participation d
 
 test('invented disabled member lookup is rejected by executor, not just hidden schema', async () => {
   const s = setup(
-    [tool('get_group_members', {}), tool('finish', {})],
+    [tool('get_group_members', {}), tool('finish', { mode: 'hard' })],
     restrictiveTools,
   );
   try {

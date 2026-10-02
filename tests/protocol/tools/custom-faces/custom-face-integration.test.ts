@@ -63,7 +63,11 @@ const URL = `https://gchat.qpic.cn/gchatpic_new/0/0-0-${MD5.toUpperCase()}/0?tok
 const direct = Object.fromEntries(
   CUSTOM_FACE_TOOL_NAMES.map((name) => [name, 'direct']),
 ) as ExtendedToolsConfig;
-const call = (id: string, name: string, args: unknown = {}): ToolCall => ({
+const call = (
+  id: string,
+  name: string,
+  args: unknown = name === 'finish' ? { mode: 'hard' } : {},
+): ToolCall => ({
   id,
   type: 'function',
   function: { name, arguments: JSON.stringify(args) },
@@ -865,7 +869,7 @@ for (const blocked of [
           const face_ref = ref(messages);
           const args =
             blocked === 'finish'
-              ? {}
+              ? { mode: 'hard' }
               : blocked === 'add_custom_face'
                 ? { image_id: 'img_1_2', description: 'fixture annotation' }
                 : blocked === 'set_custom_face_description'

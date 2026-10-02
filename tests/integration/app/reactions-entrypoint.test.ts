@@ -117,7 +117,9 @@ test(
           body.tools.some((t: any) => t.function.name === 'react_message'),
         );
         const payload = JSON.parse(
-          body.messages.findLast((m: any) => m.role === 'user').content,
+          body.messages.findLast(
+            (m: any) => m.role === 'user' && JSON.parse(m.content).wake,
+          ).content,
         );
         const wakeId = JSON.stringify(payload);
         if (wakeIds.get(group) !== wakeId) {
@@ -134,7 +136,7 @@ test(
         if (step === 0) {
           assert.equal(payload.wake.group_id, group);
           assert.equal(Object.hasOwn(payload, 'reaction_state'), false);
-          assert.ok(!JSON.stringify(payload).includes('only-'));
+          assert.ok(!JSON.stringify(payload.wake).includes('only-'));
         }
         let operations;
         if (step < 3) {
@@ -143,7 +145,7 @@ test(
               step === 0
                 ? 'read_events'
                 : step === 1
-                  ? 'read_messages'
+                  ? 'read_events'
                   : 'read_message',
               step === 0 || step === 1
                 ? { limit: 100 }
@@ -157,30 +159,33 @@ test(
           operations = [
             send('only-A-reaction-reply'),
             react('101'),
-            tool('finish'),
+            tool('finish', { mode: 'hard' }),
           ];
         } else if (group === B && round === 1) {
-          operations = [react('201', '128077'), tool('finish')];
+          operations = [
+            react('201', '128077'),
+            tool('finish', { mode: 'hard' }),
+          ];
         } else if (group === A && round === 2) {
           operations = [
             react('201'),
             react('101', '76', 'remove'),
-            tool('finish'),
+            tool('finish', { mode: 'hard' }),
           ];
         } else if (group === B && round === 2) {
           operations = [
             send('only-B-reaction-reply'),
             react('202'),
-            tool('finish'),
+            tool('finish', { mode: 'hard' }),
           ];
         } else if (group === A && round === 3) {
-          operations = [tool('finish')];
+          operations = [tool('finish', { mode: 'hard' })];
         } else if (group === B && round === 3) {
           operations = [
             react('203'),
             send('must-not-send-after-cancel'),
             react('201', '128077', 'remove'),
-            tool('finish'),
+            tool('finish', { mode: 'hard' }),
           ];
         } else {
           throw new Error('unexpected fixture model request');

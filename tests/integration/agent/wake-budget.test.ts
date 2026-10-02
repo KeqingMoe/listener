@@ -95,7 +95,10 @@ const event = (id = '1') => ({
   sender: { nickname: 'x' },
   message: [{ type: 'text', data: { text: 'hello' } }],
 });
-const call = (name: string, args: unknown = {}) => ({
+const call = (
+  name: string,
+  args: unknown = name === 'finish' ? { mode: 'hard' } : {},
+) => ({
   id: `${name}-${Math.random()}`,
   type: 'function' as const,
   function: { name, arguments: JSON.stringify(args) },
@@ -264,7 +267,15 @@ test('all tool calls share one budget and the model sees remaining values', asyn
         s.requests[i - 1],
       );
     }
-    assert.equal(s.requests.at(-1)!.filter((m) => m.role === 'user').length, 1);
+    assert.equal(
+      s.requests
+        .at(-1)!
+        .filter(
+          (m) =>
+            m.role === 'user' && !JSON.parse(String(m.content)).context_update,
+        ).length,
+      1,
+    );
     // 首轮预算来自唤醒元数据，之后来自最近一次工具结果。
     const budgets = s.requests.map((m) => {
       const last = m.filter((x) => x.role === 'tool').at(-1);
