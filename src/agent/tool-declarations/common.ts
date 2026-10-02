@@ -4,7 +4,7 @@
  */
 export function commonTypes(options: { reactions: boolean }): string {
   return [
-    `/** 本群消息ID。取自读取结果的 messageId、片段 reply.message_id 或 send_message 的结果。 */
+    `/** 本群消息ID。取自读取结果的 messageId、顶层 reply_to 或 send_message 的结果。 */
 type MessageId = string;`,
     `/** QQ号字符串（不是数字），如 "100000013"。取自消息的 userId、at.user_id 或成员查询。 */
 type UserId = string;`,
@@ -23,7 +23,6 @@ type Segment =
   /** name 只是说明，发送时只认 id。 */
   | { type: 'face'; id: FaceId; name?: string }
   | { type: 'at'; user_id: UserId }
-  | { type: 'reply'; message_id: MessageId }
   /** 未转写的语音。 */
   | { type: 'record'; content_status: 'not_transcribed' }
   /** 图片占位，不代表你已看过；需先查看。 */
@@ -38,7 +37,8 @@ type Segment =
   /** 昵称或群名片，不能当身份。 */
   nickname: string;
   time: UnixSeconds;
-  replyTo?: MessageId;
+  /** 引用的消息ID，不属于 segments。 */
+  reply_to?: MessageId;
   /** true 表示你自己发的。 */
   bot?: boolean;
   /** legacy_text 是旧版扁平文本，无法还原片段类型。 */

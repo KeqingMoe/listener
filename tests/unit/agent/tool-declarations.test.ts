@@ -110,6 +110,23 @@ test('presentation modes change only what the model sees', () => {
   assert.deepEqual(tools, snapshot);
 });
 
+test('all model presentation modes use top-level reply_to without reply segments', () => {
+  for (const toolSchema of ['json', 'ts', 'both'] as const) {
+    const config = allToolsConfig({ toolSchema });
+    const tools = buildToolDefinitions(config);
+    const prompt = buildSystemPrompt(config, tools);
+    const visible = `${prompt}\n${JSON.stringify(presentTools(tools, toolSchema))}`;
+    assert.match(visible, /reply_to/);
+    assert.doesNotMatch(
+      visible,
+      /replyTo|reply\.message_id|type\s*:\s*['"]reply['"]|不带 reply 引用/,
+    );
+    if (toolSchema !== 'json') {
+      assert.match(prompt, /interface Message \{[^}]*reply_to\?: MessageId;/);
+    }
+  }
+});
+
 test('json mode keeps the capability-section prompt without declarations', () => {
   const config = allToolsConfig({ toolSchema: 'json' });
   const prompt = buildSystemPrompt(config);

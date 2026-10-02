@@ -211,6 +211,7 @@ function fixture(old = false) {
     app,
     telemetryPath,
     sessionPath,
+    worldPath,
     get: (url: string) => app.inject({ url, headers: { cookie } }),
     revoke: () => {
       groups = [];
@@ -630,6 +631,50 @@ test('performance DTO is consistent across request, wake and overview without ro
     assert.equal(active.unknown, 0);
     assert.equal(active.performance.modelDurationMs, 200);
     assert.equal(active.performance.coverage.modelDurationRequests, 2);
+  } finally {
+    await f.cleanup();
+  }
+});
+
+test('reply lookup accepts canonical signed and zero message IDs, retaining raw evidence', async () => {
+  const f = fixture();
+  try {
+    const world = new WorldEventStore({ path: f.worldPath, groupId: '11' });
+    for (const messageId of ['-42', '0', '43']) {
+      world.appendMessage({
+        messageId,
+        userId: '100000002',
+        nickname: '甲',
+        text: messageId,
+        time: 1,
+        segments: [{ type: 'text', text: messageId }],
+      });
+    }
+    world.close();
+    const result = {
+      messages: [{ reply_to: '-42' }, { reply_to: 0 }, { replyTo: '9003' }],
+      invalid: ['-0', '00', '-042', ' 43', '9007199254740992'].map(
+        (reply_to) => ({ reply_to }),
+      ),
+      aliases: [{ REPLY_TO: '43' }, { replyto: '43' }],
+    };
+    const db = new DatabaseSync(f.sessionPath);
+    db.prepare('UPDATE model_tool_ledger SET arguments=?, result=?').run(
+      '{}',
+      JSON.stringify(result),
+    );
+    db.close();
+    const response = await f.get('/api/requests/first?groupId=11');
+    assert.equal(response.statusCode, 200);
+    const body = response.json();
+    assert.deepEqual(Object.keys(body.quotedMessages).sort(), [
+      '-42',
+      '0',
+      '9003',
+    ]);
+    assert.equal(body.quotedMessages['-42'].text, '-42');
+    assert.equal(body.quotedMessages['0'].text, '0');
+    assert.deepEqual(body.tools[0].result, result);
   } finally {
     await f.cleanup();
   }

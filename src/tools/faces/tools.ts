@@ -25,7 +25,7 @@ export function faceMarker(value: unknown): string {
 }
 
 export const FACE_LAYOUT_GUIDANCE =
-  '超级表情建议不设置 reply_to、不带 reply 引用，单独调用一次 send_message 发送，segments 中只放一个 face，才能展示大表情效果；混入文字、at、其他表情或引用都会影响放大。相关文字、at 和引用通过另一次 send_message 发送，换行不等于独立消息。若有意使用句内小尺寸表情，仍可混排；这只是排版建议，不是额外的表情数量限制。';
+  '超级表情建议不设置 reply_to 引用，单独调用一次 send_message 发送，segments 中只放一个 face，才能展示大表情效果；混入文字、at、其他表情或引用都会影响放大。相关文字、at 和引用通过另一次 send_message 发送，换行不等于独立消息。若有意使用句内小尺寸表情，仍可混排；这只是排版建议，不是额外的表情数量限制。';
 
 /** 所有已加载的ID都可发送：不过滤动画表情，也没有单独的表情配额。 */
 export const FACE_ID_SCHEMA: JsonObject = Object.freeze({

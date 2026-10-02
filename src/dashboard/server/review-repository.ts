@@ -7,6 +7,7 @@ import {
 import { lstatSync } from 'node:fs';
 import { sanitizeInspectionValue } from '../../observability/request-inspection.ts';
 import { SESSION_PHYSICAL_TURN } from '../../agent/session/indexes.ts';
+import { canonicalMessageId } from '../../onebot/identity.ts';
 import { normalizeModelRequestDiagnostics } from '../../observability/model-diagnostics.ts';
 import { type Repository, ResourceLimit, summarize } from './repository.ts';
 import {
@@ -71,7 +72,7 @@ const parse = (v: unknown): any => {
   }
 };
 const MEMBER_ID_KEY = /^(?:user_?id|actor_id|operator_id|recalled_by)$/i;
-const REPLY_ID_KEY = /^(?:reply_?to)$/i;
+const REPLY_ID_KEY = /^(?:reply_to|replyTo)$/;
 const MAX_LOOKUP_IDS = 200;
 const MAX_QUOTED_TEXT = 500;
 
@@ -91,8 +92,11 @@ function lookupIds(values: unknown[]) {
         const valid = typeof id === 'string' && /^[1-9]\d{0,19}$/.test(id);
         if (valid && MEMBER_ID_KEY.test(key)) {
           members.size < MAX_LOOKUP_IDS && members.add(id);
-        } else if (valid && REPLY_ID_KEY.test(key)) {
-          replies.size < MAX_LOOKUP_IDS && replies.add(id);
+        } else if (REPLY_ID_KEY.test(key)) {
+          const messageId = canonicalMessageId(item);
+          if (messageId !== undefined && replies.size < MAX_LOOKUP_IDS) {
+            replies.add(messageId);
+          }
         } else {
           walk(item, depth + 1);
         }

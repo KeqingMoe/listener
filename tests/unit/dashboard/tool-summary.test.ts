@@ -124,6 +124,43 @@ test('replies resolve to the quoted message one level deep', () => {
   assert.equal(view.reply?.quote?.reply?.quote, null);
 });
 
+test('model reply_to displays signed and zero targets without rewriting historical evidence', () => {
+  const quotes = collectQuotes([], {
+    '-42': { userId: '1', text: '负数目标' },
+    '0': { userId: '2', text: '零目标' },
+  });
+  for (const replyTo of ['-42', '0']) {
+    for (const field of ['reply_to', 'replyTo']) {
+      const message = {
+        userId: '3',
+        [field]: replyTo,
+        segments: [{ type: 'text', text: '回复正文' }],
+      };
+      const original = JSON.stringify(message);
+      for (const [name, result] of [
+        ['read_message', { message }],
+        ['read_messages', { messages: [message] }],
+        [
+          'read_events',
+          { events: [{ type: 'message.created', payload: { message } }] },
+        ],
+      ] as const) {
+        const view = toolView(name, {}, result, { quotes });
+        assert.equal(view?.kind, 'messages');
+        if (view?.kind !== 'messages') {
+          continue;
+        }
+        assert.equal(view.lines[0]?.reply?.messageId, replyTo);
+        assert.equal(
+          partsText(view.lines[0]!.reply!.quote!.parts),
+          replyTo === '0' ? '零目标' : '负数目标',
+        );
+        assert.equal(JSON.stringify(message), original);
+      }
+    }
+  }
+});
+
 test('read_messages lists speakers with ids, marks bot and recalled, and caps length', () => {
   const message = (i: number, extra = {}) => ({
     messageId: String(i),

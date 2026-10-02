@@ -386,7 +386,7 @@ export function sanitizeMessageContent(
     : undefined;
 }
 
-/** 有界的content投影只附带来源字段和安全的媒体引用。 */
+/** 模型侧有界投影；内部引用表示不变，输出仅使用顶层 reply_to。 */
 export function projectMessage(
   entry: TimelineEntry,
   limit = Infinity,
@@ -413,7 +413,7 @@ export function projectMessage(
     typeof source.replyTo === 'string' &&
     canonicalMessageId(source.replyTo) === source.replyTo
   ) {
-    projected.replyTo = source.replyTo;
+    projected.reply_to = source.replyTo;
   }
   if (typeof source.bot === 'boolean') {
     projected.bot = source.bot;
@@ -441,7 +441,7 @@ export function projectMessage(
         ? source.segments_omitted
         : 0;
     const result = bound(
-      normalized.segments,
+      normalized.segments.filter((segment) => segment.type !== 'reply'),
       limit,
       Math.min(
         Number.MAX_SAFE_INTEGER,

@@ -220,6 +220,49 @@ test('guest tools mirror results, carry Uint8Array both ways and throw only for 
   assert.deepEqual(seen, [{ data: Buffer.from([2, 3]), n: 1 }]);
 });
 
+test('JS exposes reply_to while internal messages and OneBot replies retain their formats', async () => {
+  const h = host();
+  try {
+    h.world.appendMessage({
+      messageId: '1',
+      userId: actor,
+      nickname: 'member',
+      text: 'body',
+      time: Date.now() / 1000,
+      replyTo: '2',
+      segments: [
+        { type: 'reply', message_id: '2' },
+        { type: 'text', text: 'body' },
+      ],
+    });
+    const r =
+      await h.run(`const before = await tools.read_message({message_id:'1'});
+      const sent = await tools.send_message({reply_to:'1',segments:[{type:'text',text:'ok'}]});
+      const after = await tools.read_message({message_id:sent.message_id});
+      return JSON.stringify([before.message, after.message]);`);
+    assert.equal(r.status, 'completed');
+    const messages = JSON.parse((r as { value: string }).value);
+    assert.deepEqual(
+      messages.map((m: any) => m.reply_to),
+      ['2', '1'],
+    );
+    for (const message of messages) {
+      assert.equal(Object.hasOwn(message, 'replyTo'), false);
+      assert.ok(message.segments.every((s: any) => s.type !== 'reply'));
+    }
+    assert.equal(h.mem.find('5000')!.replyTo, '1');
+    assert.deepEqual(
+      (
+        h.calls.find((c) => c.action === 'send_group_msg')!.params
+          .message as any[]
+      )[0],
+      { type: 'reply', data: { id: '1' } },
+    );
+  } finally {
+    await h.close();
+  }
+});
+
 test('sandbox code sends messages through the same path, records calls and returns a forced summary', async () => {
   const h = host();
   try {

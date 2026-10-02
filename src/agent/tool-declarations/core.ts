@@ -44,7 +44,9 @@ function get_group_members(_: { limit: number; offset?: number; search?: string 
   },
   read_message: {
     summary: '读取一条本群消息或其引用的消息。',
-    ts: ({ config }) => `/** 也可读最近消息所引用的消息（取其 image_id 等）。${
+    ts: ({
+      config,
+    }) => `/** 也可用最近消息的顶层 reply_to 读取被引用消息（取其 image_id 等）。${
       config.observeReactions ? '会刷新反应快照。' : ''
     } */
 function read_message(_: { message_id: MessageId }): { status: 'ok'; message: Message } | Failure;`,

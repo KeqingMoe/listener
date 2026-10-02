@@ -69,7 +69,8 @@ test('typed face and literal marker text remain distinct across SQLite reopen, i
     const projected = JSON.parse(memory.context()).messages[0];
     assert.equal(Object.hasOwn(projected, 'text'), false);
     assert.equal(projected.bot, true);
-    assert.equal(projected.replyTo, '99');
+    assert.equal(projected.reply_to, '99');
+    assert.equal(Object.hasOwn(projected, 'replyTo'), false);
     assert.equal(projected.segments[0].text, literal);
     assert.equal(projected.segments[1].type, 'face');
     memory.close();

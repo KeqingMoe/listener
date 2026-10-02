@@ -226,7 +226,8 @@ function messageLine(
     return null;
   }
   const names = ctx.names;
-  const replyTo = str(m.replyTo);
+  // 模型投影使用 reply_to；内部消息及历史证据仍保留 replyTo，不改写原始数据。
+  const replyTo = str(m.reply_to ?? m.replyTo);
   const userId = str(m.userId);
   const parts =
     m.representation === 'legacy_text'

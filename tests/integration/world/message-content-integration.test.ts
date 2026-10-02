@@ -187,12 +187,9 @@ test('clipping long content never erases a later native quote from provenance', 
   assert.equal(entry.replyTo, '2');
   assert.equal(entry.content_truncated, true);
   const displayed = projectMessage(entry);
-  assert.equal(displayed.replyTo, '2');
-  assert.ok(
-    (displayed.segments as any[]).some(
-      (s) => s.type === 'reply' && s.message_id === '2',
-    ),
-  );
+  assert.equal(displayed.reply_to, '2');
+  assert.equal(Object.hasOwn(displayed, 'replyTo'), false);
+  assert.ok((displayed.segments as any[]).every((s) => s.type !== 'reply'));
   const memory = new Mem();
   memory.append(entry);
   const api: Api = {
@@ -214,7 +211,8 @@ test('clipping long content never erases a later native quote from provenance', 
     groupId: LISTENER_GROUP,
   }).execute('read_message', { message_id: '2' }, context);
   assert.equal(result.status, 'ok');
-  assert.equal((result.message as any).replyTo, '3');
+  assert.equal((result.message as any).reply_to, '3');
+  assert.equal(Object.hasOwn(result.message as object, 'replyTo'), false);
   assert.equal((result.message as any).content_truncated, true);
 });
 

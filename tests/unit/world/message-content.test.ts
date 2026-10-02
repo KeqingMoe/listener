@@ -448,7 +448,10 @@ test('escaped text respects serialized cap and UTF16 truncation never cuts an em
 test('new structured projection drops compatibility text and arbitrary fields but retains provenance', () => {
   const entry = Object.assign(
     row({
-      segments: [{ type: 'face', id: fixture.id }],
+      segments: [
+        { type: 'reply', message_id: '9' },
+        { type: 'face', id: fixture.id },
+      ],
       replyTo: '9',
       bot: true,
       images,
@@ -462,7 +465,9 @@ test('new structured projection drops compatibility text and arbitrary fields bu
   assert.equal(out.userId, '34');
   assert.equal(out.nickname, 'fixture');
   assert.equal(out.time, 123);
-  assert.equal(out.replyTo, '9');
+  assert.equal(out.reply_to, '9');
+  assert.equal(Object.hasOwn(out, 'replyTo'), false);
+  assert.equal(projectMessage(entry, 0).reply_to, '9');
   assert.equal(out.bot, true);
   assert.deepEqual(out.images, images);
   assert.deepEqual(out.forwards, forwards);
