@@ -1,6 +1,8 @@
 import { createHash, randomBytes } from 'node:crypto';
 import type { FastifyInstance } from 'fastify';
 import { sessionToken } from './auth.ts';
+import { TOOL_OBSERVATION_SCHEMA_VERSION } from '../../contracts/tool-observation.ts';
+import { TOOL_USAGE_ROLE_VERSION } from '../contracts/tool-observations.ts';
 import { type Repository } from './repository.ts';
 import {
   RESOURCE_SYNC_MAX_PAYLOAD_BYTES,
@@ -196,6 +198,8 @@ export function registerResourceSync(
           base.groups,
           base.sources.telemetryPath,
           base.sources.inspectionSecrets ?? [],
+          TOOL_OBSERVATION_SCHEMA_VERSION,
+          TOOL_USAGE_ROLE_VERSION,
         ]),
       )
       .digest('hex');
@@ -278,6 +282,8 @@ export function registerResourceSync(
           base.groups,
           base.sources.telemetryPath,
           base.sources.inspectionSecrets ?? [],
+          TOOL_OBSERVATION_SCHEMA_VERSION,
+          TOOL_USAGE_ROLE_VERSION,
         ]),
       )
       .digest('hex');

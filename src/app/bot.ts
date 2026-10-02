@@ -27,6 +27,7 @@ import {
 } from '../observability/logger.ts';
 import { RuntimeEventStore } from '../observability/runtime-events.ts';
 import { TelemetryStore } from '../observability/telemetry.ts';
+import { ToolObservationStore } from '../observability/tool-call-observations.ts';
 import { FACE_CATALOG, EXAMPLE_FACE_CATALOG } from '../onebot/catalog/faces.ts';
 import { getReactionCatalog } from '../onebot/catalog/reactions.ts';
 import { CustomFaceStore } from '../tools/custom-faces/store.ts';
@@ -42,6 +43,7 @@ import { createSearchBackend } from '../tools/web/search.ts';
 
 let logger: ReturnType<typeof configureLogging> | undefined;
 let telemetry: TelemetryStore | undefined;
+let toolObservations: ToolObservationStore | undefined;
 let runtimeEvents: RuntimeEventStore | undefined,
   stopObserving: (() => void) | undefined;
 let heartbeat: ReturnType<typeof setInterval> | undefined;
@@ -110,7 +112,28 @@ async function main(): Promise<void> {
   sandboxStore = new SandboxJobStore({
     path: resolve(app.storage.directory, 'sandbox.sqlite'),
   });
-  sandboxService = new SandboxService({ store: sandboxStore });
+  try {
+    let observationWarningEmitted = false;
+    toolObservations = new ToolObservationStore(app.storage.telemetryPath, {
+      onError: () => {
+        // Do not send this through the logger's observer back into the same failing SQLite DB.
+        if (!observationWarningEmitted) {
+          observationWarningEmitted = true;
+          console.warn(
+            'tool observation storage unavailable; counts may be incomplete',
+          );
+        }
+      },
+    });
+  } catch {
+    log('warn', 'app.tool_observations_unavailable', {
+      reason: 'storage_failed',
+    });
+  }
+  sandboxService = new SandboxService({
+    store: sandboxStore,
+    observer: toolObservations,
+  });
   artifactStore = new ArtifactStore({
     path: resolve(app.storage.directory, 'artifacts.sqlite'),
     directory: app.storage.artifactDirectory,
@@ -537,6 +560,13 @@ async function main(): Promise<void> {
           log('warn', 'app.registry_failed', { reason: 'close_failed' });
         }
         try {
+          toolObservations?.close();
+        } catch {
+          log('warn', 'app.tool_observations_unavailable', {
+            reason: 'close_failed',
+          });
+        }
+        try {
           telemetry?.close();
         } catch {
           log('warn', 'model.telemetry_failed', { reason: 'close_failed' });
@@ -566,6 +596,9 @@ void main().catch(async (error: unknown) => {
   } catch {}
   try {
     registry?.close();
+  } catch {}
+  try {
+    toolObservations?.close();
   } catch {}
   try {
     telemetry?.close();

@@ -2,6 +2,12 @@ import { createHash } from 'node:crypto';
 import { startExecution, encodeToolValue } from './executor.ts';
 import type { JsonObject } from '../contracts/json.ts';
 import type {
+  ToolCallObserver,
+  ToolObservationEnd,
+  ToolObservationStart,
+} from '../contracts/tool-observation.ts';
+import { observationResult } from './tool-observation.ts';
+import type {
   ExecutionOptions,
   ExecutionResult,
   ExecutionDiagnostic,
@@ -137,6 +143,8 @@ export class SandboxService {
   constructor(
     private options: {
       store: SandboxJobStore;
+      /** Optional, fail-open metadata observation; never changes dispatch or results. */
+      observer?: ToolCallObserver;
       maxConcurrent?: number;
       maxQueued?: number;
       executor?: Executor;
@@ -395,6 +403,19 @@ export class SandboxService {
   ): Promise<JsonObject> {
     const seq = ++item.calls,
       startedAt = Date.now();
+    const observation: ToolObservationStart = {
+      selfId: item.job.selfId,
+      groupId: item.job.groupId,
+      jobId: item.job.jobId,
+      seq,
+      tool: name,
+      startedAt,
+    };
+    try {
+      this.options.observer?.start({ ...observation });
+    } catch {
+      // An observer cannot block a call, retry it, or change its result.
+    }
     let encoded: { json: string; attachments: Uint8Array[] };
     try {
       encoded = encodeToolValue(args);
@@ -406,6 +427,8 @@ export class SandboxService {
       hash.update(a);
     }
     let result: JsonObject;
+    let bridgeOutcome: ToolObservationEnd['bridgeOutcome'] =
+      this.bridge && item.caller ? 'returned' : 'unavailable';
     try {
       result =
         this.bridge && item.caller
@@ -421,10 +444,23 @@ export class SandboxService {
             )
           : { status: 'error', error: 'host_unavailable' };
     } catch {
+      bridgeOutcome = 'threw';
       result = { status: 'error', error: 'tool_failed' };
     }
     if (!result || typeof result !== 'object' || Array.isArray(result)) {
+      bridgeOutcome = 'invalid_result';
       result = { status: 'error', error: 'invalid_host_result' };
+    }
+    try {
+      this.options.observer?.end({
+        ...observation,
+        finishedAt: Date.now(),
+        ...observationResult(result),
+        bridgeOutcome,
+      });
+    } catch {
+      // Keep observing late receipts even after the job has settled, while the writer is open.
+      // A failed observation must not replace the caller's result.
     }
     const ids: Record<string, string> = {};
     for (const key of ID_FIELDS) {

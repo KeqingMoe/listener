@@ -465,6 +465,7 @@ const denseRequests: ReviewRequest[] = Array.from(
 );
 
 interface MockState {
+  toolStatistics?: ToolsResponse;
   jobLinks?: Partial<JavascriptJobLinksResponse>;
   jobLinksGate?: Promise<void>;
   wakeEvents?: WakeReviewDetail['events'];
@@ -661,7 +662,7 @@ async function mock(page: Page, state: MockState = {}) {
     } else if (path === '/api/health') {
       body = health;
     } else if (path === '/api/tools') {
-      body = tools;
+      body = state.toolStatistics ?? tools;
     } else if (path === '/api/requests') {
       const items = state.empty
         ? []
@@ -2697,9 +2698,155 @@ test('aggregate tools expose metadata and review links rather than invented bodi
   await expect(page.locator('main tbody tr')).toContainText('read_events');
   await expect(page.locator('main tbody tr td').last()).toHaveText('—');
   await expect(
-    page.getByRole('link', { name: '逐次调用复盘 →' }),
+    page.getByRole('link', { name: '直接调用复盘 →' }),
   ).toHaveAttribute('href', '/wakes');
   await expect(page.locator('main .tool-detail')).toHaveCount(0);
+});
+
+function observedToolsFixture(): ToolsResponse {
+  const observation = (name: string, observedCalls: number) => ({
+    name,
+    observedCalls,
+    withStart: observedCalls,
+    withEnd: observedCalls - 1,
+    withoutEnd: 1,
+    withoutStart: 0,
+    interrupted: 1,
+    bridgeFailures: 0,
+    statuses: [
+      { kind: 'present' as const, status: 'pending', calls: observedCalls - 1 },
+    ],
+    durationP50Ms: null,
+    durationP95Ms: null,
+  });
+  return {
+    ...tools,
+    items: [
+      ...tools.items,
+      ...[
+        'finish',
+        'ack_events',
+        'execute_javascript',
+        'query_javascript_jobs',
+        'cancel_javascript_job',
+      ].map((name) => ({ ...tools.items[0]!, name, calls: 99 })),
+    ],
+    internal: {
+      coverage: {
+        status: 'observed',
+        collectionStartedAt: range.since + 1000,
+        retainedSince: range.since + 2000,
+        reasons: ['before_collection', 'retention_gap', 'known_write_gaps'],
+      },
+      items: [observation('read_events', 7), observation('create_image', 11)],
+    },
+  };
+}
+
+test('tool statistics separate observed sources and roles without counting control as business actions', async ({
+  page,
+}) => {
+  const { requests } = await mock(page, {
+    toolStatistics: observedToolsFixture(),
+  });
+  await page.goto('/tools');
+  const rows = page.locator('.tool-statistics-table tbody tr');
+  await expect(rows).toHaveCount(2);
+  const read = rows.filter({ hasText: 'read_events' });
+  const image = rows.filter({ hasText: 'create_image' });
+  await expect(read.locator('td').nth(1)).toHaveText('3');
+  await expect(read.locator('td').nth(2)).toHaveText('7');
+  await expect(image.locator('td').nth(1)).toHaveText('— 无记录');
+  await expect(image.locator('td').nth(2)).toHaveText('11');
+  await expect(page.locator('.tool-coverage')).toContainText('未回填');
+  await expect(page.locator('.tool-coverage')).toContainText('裁剪');
+  await expect(page.locator('.tool-coverage')).toContainText('写入故障');
+  await read.locator('td').nth(5).locator('summary').click();
+  await expect(read).toContainText('中断与结束可并存，不相加');
+  await expect(read).toContainText('原始返回：pending');
+  await expect(read).not.toContainText('运行中');
+  const calls = requests.filter((url) => url.pathname === '/api/tools').length;
+  await page.getByLabel('排序来源', { exact: true }).selectOption('internal');
+  await expect(rows.first()).toContainText('create_image');
+  await page
+    .getByLabel('工具角色', { exact: true })
+    .selectOption('flow_control');
+  await expect(rows).toHaveCount(2);
+  await expect(rows).toContainText(['ack_events', 'finish']);
+  await page
+    .getByLabel('工具角色', { exact: true })
+    .selectOption('javascript_dispatch');
+  await expect(rows).toHaveCount(3);
+  await expect(page.locator('.tool-statistics-table')).not.toContainText(
+    'create_image',
+  );
+  expect(requests.filter((url) => url.pathname === '/api/tools').length).toBe(
+    calls,
+  );
+});
+
+test('tool statistics old and historical unavailable responses render unknown rather than zero', async ({
+  page,
+}) => {
+  const state: MockState = { toolStatistics: tools };
+  await mock(page, state);
+  await page.goto('/tools');
+  const internalCell = page
+    .locator('.tool-statistics-table tbody tr')
+    .first()
+    .locator('td')
+    .nth(2);
+  await expect(internalCell).toHaveText('— 未知');
+  await expect(page.locator('.tool-coverage')).toContainText(
+    '仅有直接调用记录',
+  );
+  for (const [status, reason, note] of [
+    ['not_recorded', 'before_collection', '未回填'],
+    ['unavailable', 'source_unavailable', '遥测来源不可用'],
+    ['unsupported', 'incompatible_schema', '遥测版本不兼容'],
+  ] as const) {
+    state.toolStatistics = observedToolsFixture();
+    state.toolStatistics.items = tools.items;
+    state.toolStatistics.internal!.coverage.status = status;
+    state.toolStatistics.internal!.coverage.reasons = [reason];
+    await refreshImmediately(page);
+    await expect(page.locator('.tool-coverage')).toContainText(note);
+    await expect(internalCell).toHaveText('— 未知');
+    await expect(page.locator('.tool-statistics-table')).not.toContainText(
+      'create_image',
+    );
+  }
+});
+
+test('tool statistics clear old source observations on group scope changes and revocation', async ({
+  page,
+}) => {
+  await mock(page, { toolStatistics: observedToolsFixture() });
+  await page.goto('/tools');
+  await expect(page.locator('.tool-statistics-table')).toContainText(
+    'create_image',
+  );
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  await page.route(
+    (url) =>
+      effectiveApiUrl(url).pathname === '/api/tools' &&
+      effectiveApiUrl(url).searchParams.get('groupId') === '10001',
+    async (route) => {
+      await gate;
+      await route.fulfill({
+        status: 403,
+        json: { error: 'forbidden', message: 'Scope revoked' },
+      });
+    },
+  );
+  await page.getByLabel('群组', { exact: true }).selectOption('10001');
+  await expect(page.locator('.tool-statistics-table')).toHaveCount(0);
+  release();
+  await expect(page.locator('main')).toContainText('当前访问未获授权');
+  await expect(page.locator('main')).not.toContainText('create_image');
 });
 
 test('event category and metadata search preserve URL and link the actual turn to requests', async ({

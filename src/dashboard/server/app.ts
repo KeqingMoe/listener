@@ -15,6 +15,8 @@ import { ReviewRepository } from './review-repository.ts';
 import { buildRequestTrends } from './request-trends.ts';
 import { RequestTrendsSync } from './request-trends-sync.ts';
 import { registerResourceSync } from './resource-sync.ts';
+import { internalToolObservations } from './tool-observations.ts';
+import { TOOL_USAGE_ROLE_VERSION } from '../contracts/tool-observations.ts';
 import { isIP } from 'node:net';
 import { type AuthStore, sessionToken } from './auth.ts';
 import { authWrites, registerAuthRoutes } from './auth-routes.ts';
@@ -408,6 +410,8 @@ export function buildApp(options: AppOptions) {
       range,
       availability: repository.availability(),
       items: repository.tools(range, groupId),
+      internal: internalToolObservations(repository, range, groupId),
+      toolUsageRoleVersion: TOOL_USAGE_ROLE_VERSION,
     };
   });
   registerReviewRoutes(app, repository, now);

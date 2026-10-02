@@ -149,7 +149,11 @@ export interface ToolSummary {
 export interface ToolsResponse {
   range: Range;
   availability: Availability;
+  /** Legacy fields remain direct model_tool_ledger records, never direct + internal. */
   items: ToolSummary[];
+  /** Absent on older servers: internal observations are unknown, not zero. */
+  internal?: import('./tool-observations.ts').InternalToolsResponse;
+  toolUsageRoleVersion?: number;
 }
 
 // 元数据API约定：
