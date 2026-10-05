@@ -1,0 +1,19 @@
+{
+  "compilerOptions": {
+    "target": "ES2023",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "skipLibCheck": true,
+    "verbatimModuleSyntax": true,
+    "isolatedModules": true,
+    "noEmit": true,
+    "types": ["node", "vite/client"],
+    "rootDir": "${configDir}",
+    "paths": {
+      "@/*": ["${configDir}/src/*"]
+    }
+  },
+  "include": ["${configDir}/src/**/*.ts", "${configDir}/tests/**/*.ts"]
+}
