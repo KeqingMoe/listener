@@ -34,7 +34,9 @@ export default defineConfig({
     target: 'node24',
     emptyOutDir: false,
     rolldownOptions: {
-      input: {},
+      input: {
+        chat: `${src('chat')}/index.ts`,
+      },
       preserveEntrySignatures: 'strict',
       output: {
         format: 'esm',
@@ -47,6 +49,8 @@ export default defineConfig({
   test: {
     passWithNoTests: true,
     include: ['packages/*/tests/**/*.test.ts'],
-    alias: {},
+    alias: {
+      '@listener/chat': `${src('chat')}/index.ts`,
+    },
   },
 });
