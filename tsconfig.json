@@ -1,4 +1,4 @@
 {
   "files": [],
-  "references": [{ "path": "packages/chat" }]
+  "references": [{ "path": "packages/chat" }, { "path": "packages/agent" }]
 }
