@@ -7,5 +7,8 @@
       "types": "./src/index.ts",
       "default": "./dist/index.js"
     }
+  },
+  "dependencies": {
+    "node-napcat-ts": "^0.4.25"
   }
 }
