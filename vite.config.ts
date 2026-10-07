@@ -37,6 +37,7 @@ export default defineConfig({
       input: {
         chat: `${src('chat')}/index.ts`,
         agent: `${src('agent')}/index.ts`,
+        app: `${src('app')}/index.ts`,
       },
       preserveEntrySignatures: 'strict',
       output: {
@@ -53,6 +54,7 @@ export default defineConfig({
     alias: {
       '@listener/chat': `${src('chat')}/index.ts`,
       '@listener/agent': `${src('agent')}/index.ts`,
+      '@listener/app': `${src('app')}/index.ts`,
     },
   },
 });

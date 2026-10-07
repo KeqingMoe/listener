@@ -1,4 +1,8 @@
 {
   "files": [],
-  "references": [{ "path": "packages/chat" }, { "path": "packages/agent" }]
+  "references": [
+    { "path": "packages/chat" },
+    { "path": "packages/agent" },
+    { "path": "packages/app" }
+  ]
 }
