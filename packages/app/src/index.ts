@@ -11,3 +11,4 @@ export type {
   ProviderConfig,
 } from './config';
 export { configError, parse } from './config';
+export { modelsFromConfig } from './models';
