@@ -38,12 +38,17 @@ export default defineConfig({
         chat: `${src('chat')}/index.ts`,
         agent: `${src('agent')}/index.ts`,
         app: `${src('app')}/index.ts`,
+        'app-main': `${src('app')}/main.ts`,
       },
       preserveEntrySignatures: 'strict',
       output: {
         format: 'esm',
         dir: root,
-        entryFileNames: chunk => `packages/${chunk.name}/dist/index.js`,
+        entryFileNames: chunk =>
+          chunk.name === 'app-main'
+            ? 'packages/app/dist/main.js'
+            : `packages/${chunk.name}/dist/index.js`,
+        chunkFileNames: 'packages/app/dist/[name].js',
       },
       external: [/^node:/, /^(?:@(?!\/)|[a-zA-Z])/],
     },

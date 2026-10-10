@@ -10,6 +10,7 @@
   ],
   "scripts": {
     "build": "vite build",
+    "start": "node packages/app/dist/main.js",
     "dev": "vite build --watch",
     "typecheck": "npm exec --workspaces -- tsc --noEmit",
     "format": "biome format --write .",

@@ -12,3 +12,4 @@ export type {
 } from './config';
 export { configError, parse } from './config';
 export { modelsFromConfig } from './models';
+export { Scheduler } from './scheduler';
