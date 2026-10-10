@@ -30,6 +30,10 @@ function client(): Client {
     async message() {
       return undefined;
     },
+    watch() {
+      return () => {};
+    },
+    dispose() {},
   };
 }
 
@@ -48,11 +52,13 @@ function loop(c = chat(), text = 'ok') {
   const models = createModels();
   models.setProvider(faux.provider);
   faux.setResponses([fauxAssistantMessage(text)]);
+  const abort = new AbortController();
   const l = new Loop(c, 10, {
     model: faux.getModel(),
     streamFn: models.streamSimple.bind(models),
+    signal: abort.signal,
   });
-  return { chat: c, agent: l.agent, loop: l, faux };
+  return { chat: c, agent: l.agent, loop: l, faux, abort };
 }
 
 function userJson(agent: Loop['agent'], index = 0) {
@@ -174,6 +180,7 @@ describe('Loop', () => {
         }
         return inner(model, context, options);
       },
+      signal: new AbortController().signal,
     });
     faux.setResponses([
       fauxAssistantMessage([fauxToolCall('noop', {})], {
@@ -187,22 +194,128 @@ describe('Loop', () => {
     expect(c.openWindow().map(event => event.msgId)).toEqual([leftover.msgId]);
   });
 
-  it('已经在 chatting 时不能再 open', async () => {
+  it('驻留期间新事件再投一轮', async () => {
     const c = chat();
+    await c.append({
+      type: 'message.created',
+      msgId: must(MessageId(10)),
+      ts: must(UnixTime(1)),
+      userId: must(UserId('2')),
+      segments: [{ type: 'text', text: 'a' }],
+    });
+    const extra = {
+      type: 'message.created' as const,
+      msgId: must(MessageId(11)),
+      ts: must(UnixTime(1)),
+      userId: must(UserId('2')),
+      segments: [{ type: 'text' as const, text: 'during' }],
+    };
+    const faux = fauxProvider();
+    const models = createModels();
+    models.setProvider(faux.provider);
+    faux.setResponses([fauxAssistantMessage('200'), fauxAssistantMessage('')]);
+    const l = new Loop(c, 10, {
+      model: faux.getModel(),
+      streamFn: models.streamSimple.bind(models),
+      signal: new AbortController().signal,
+    });
+    const opened = l.open();
+    await new Promise(resolve => {
+      setTimeout(resolve, 20);
+    });
+    await c.append(extra);
+    await opened;
+    expect(l.chatting).toBe(false);
+    expect(userJson(l.agent, -1)).toEqual([extra]);
+  });
+
+  it('硬退不倒未读，下次开窗还能看见', async () => {
+    const c = chat();
+    await c.append({
+      type: 'message.created',
+      msgId: must(MessageId(10)),
+      ts: must(UnixTime(1)),
+      userId: must(UserId('2')),
+      segments: [{ type: 'text', text: 'a' }],
+    });
+    const leftover = {
+      type: 'message.created' as const,
+      msgId: must(MessageId(11)),
+      ts: must(UnixTime(1)),
+      userId: must(UserId('2')),
+      segments: [{ type: 'text' as const, text: 'during' }],
+    };
     const faux = fauxProvider();
     const models = createModels();
     models.setProvider(faux.provider);
     faux.setResponses([fauxAssistantMessage('')]);
-    const inner = models.streamSimple.bind(models);
+    const stream = models.streamSimple.bind(models);
     const l = new Loop(c, 10, {
       model: faux.getModel(),
       streamFn: async (model, context, options) => {
         await new Promise(resolve => {
           setTimeout(resolve, 50);
         });
-        return inner(model, context, options);
+        return stream(model, context, options);
       },
+      signal: new AbortController().signal,
     });
+    const opened = l.open();
+    await new Promise(resolve => {
+      setTimeout(resolve, 20);
+    });
+    await c.append(leftover);
+    await opened;
+    expect(l.chatting).toBe(false);
+    expect(
+      userJson(l.agent).map((event: { msgId: number }) => event.msgId),
+    ).toEqual([10]);
+    expect(c.openWindow().map(event => event.msgId)).toEqual([leftover.msgId]);
+  });
+
+  it('dispose 取消 on，驻留不再被叫醒', async () => {
+    const c = chat();
+    await c.append({
+      type: 'message.created',
+      msgId: must(MessageId(10)),
+      ts: must(UnixTime(1)),
+      userId: must(UserId('2')),
+      segments: [{ type: 'text', text: 'a' }],
+    });
+    const extra = {
+      type: 'message.created' as const,
+      msgId: must(MessageId(11)),
+      ts: must(UnixTime(1)),
+      userId: must(UserId('2')),
+      segments: [{ type: 'text' as const, text: 'during' }],
+    };
+    const faux = fauxProvider();
+    const models = createModels();
+    models.setProvider(faux.provider);
+    faux.setResponses([fauxAssistantMessage('200'), fauxAssistantMessage('')]);
+    const abort = new AbortController();
+    const l = new Loop(c, 10, {
+      model: faux.getModel(),
+      streamFn: models.streamSimple.bind(models),
+      signal: abort.signal,
+    });
+    const opened = l.open();
+    await new Promise(resolve => {
+      setTimeout(resolve, 20);
+    });
+    abort.abort();
+    l.dispose();
+    await c.append(extra);
+    await opened;
+    expect(l.chatting).toBe(false);
+    expect(
+      userJson(l.agent).map((event: { msgId: number }) => event.msgId),
+    ).toEqual([10]);
+    expect(c.openWindow().map(event => event.msgId)).toEqual([extra.msgId]);
+  });
+
+  it('已经在 chatting 时不能再 open', async () => {
+    const { loop: l } = loop(chat(), '50');
     const opened = l.open();
     await expect(l.open()).rejects.toThrow(loopError.alreadyOpen);
     await opened;

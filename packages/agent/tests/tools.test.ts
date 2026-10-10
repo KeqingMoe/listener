@@ -27,6 +27,7 @@ function must<T>(value: T | undefined): T {
 describe('tools', () => {
   it('sendMessage 走 chat.send', async () => {
     const sent: Send[] = [];
+    const abort = new AbortController();
     const client: Client = {
       async send(_groupId, message) {
         sent.push(message);
@@ -35,6 +36,10 @@ describe('tools', () => {
       async message() {
         return undefined;
       },
+      watch() {
+        return () => {};
+      },
+      dispose() {},
     };
     const chat = new Chat(
       {
@@ -68,6 +73,7 @@ describe('tools', () => {
       model: faux.getModel(),
       streamFn: models.streamSimple.bind(models),
       tools: tools(chat),
+      signal: abort.signal,
     });
     await loop.open();
     expect(sent).toEqual([{ segments: [{ type: 'text', text: '并非 kq' }] }]);
@@ -86,6 +92,10 @@ describe('tools', () => {
         async message() {
           return undefined;
         },
+        watch() {
+          return () => {};
+        },
+        dispose() {},
       },
     );
     const sendMessage = tools(chat).find(tool => tool.name === 'sendMessage');

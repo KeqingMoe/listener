@@ -74,6 +74,11 @@ function take(gap: Gap, query?: Omit<ReadEventsQuery, 'gapId'>): TakeResult {
   };
 }
 
+export type ChatHandler = (payload: {
+  event: ChatEvent;
+  mentioned: Mentioned;
+}) => void;
+
 export class Chat {
   readonly selfId: UserId;
   readonly groupId: GroupId;
@@ -82,11 +87,26 @@ export class Chat {
   // 缺口一直留着，压缩再收。
   #gaps = new Map<GapId, Gap>();
   #nextGap = 0;
+  #handlers = new Set<ChatHandler>();
+  #unwatch: () => void;
 
   constructor(identity: ChatIdentity, client: Client) {
     this.selfId = identity.selfId;
     this.groupId = identity.groupId;
     this.client = client;
+    this.#unwatch = client.watch(this.groupId, this.append.bind(this));
+  }
+
+  on(handler: ChatHandler): () => void {
+    this.#handlers.add(handler);
+    return () => {
+      this.#handlers.delete(handler);
+    };
+  }
+
+  dispose(): void {
+    this.#unwatch();
+    this.#handlers.clear();
   }
 
   async append(event: ChatEvent): Promise<void> {
@@ -97,6 +117,9 @@ export class Chat {
     this.#unread.items.push({ event, mentioned });
     if (hit(mentioned)) {
       this.#unread.mentioned += 1;
+    }
+    for (const handler of this.#handlers) {
+      handler({ event, mentioned });
     }
   }
 
